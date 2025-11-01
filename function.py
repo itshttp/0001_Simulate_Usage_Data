@@ -62,34 +62,42 @@ def generate_account_data(non_active_ratio = 0.05):
         sa_brand_id, sa_brand_name = random.choice(BRANDS)
         sa_ubrand_id, sa_ubrand_description = random.choice(UBRANDS)
         
-        # Package and tier - FIXED for this customer
-        package_id, package_name, catalog_package_id, catalog_package_name = random.choice(PACKAGES)
+        # Package and tier - FIXED for this customer (can change rarely)
+        # Initial package selection
+        current_package_id, current_package_name, current_catalog_package_id, current_catalog_package_name = random.choice(PACKAGES)
         tier_id, tier_name, edition_name = random.choice(TIERS)
-        
+
         # Other FIXED attributes
         is_tester = random.choice([True, False])
         external_account_id = f'EXT-{ea_id:08d}'
         ban = f'BAN-{random.randint(100000, 999999)}'
         opco_id = random.choice(OPCOS)
-        
+
         # Determine if this account will become non-active (5% chance)
         will_become_inactive = random.random() < non_active_ratio
         inactive_from_month = None
-        
+
         if will_become_inactive:
             # Choose a random month (not the first one) when account becomes inactive
             inactive_from_index = random.randint(1, len(months) - 1)
             inactive_from_month = months[inactive_from_index]
-        
-        for month in months:
+
+        for month_idx, month in enumerate(months):
             # Check if we should stop generating records (account became inactive)
             if inactive_from_month and month >= inactive_from_month:
                 break
-            
-            # SA_ACCT_STATUS is the only dynamic field
+
+            # Package change logic: 10% probability every 24 months
+            # Check if we're at a 24-month boundary (and not the first month)
+            if month_idx > 0 and month_idx % 24 == 0:
+                # 10% chance to change package
+                if random.random() < 0.10:
+                    current_package_id, current_package_name, current_catalog_package_id, current_catalog_package_name = random.choice(PACKAGES)
+
+            # SA_ACCT_STATUS is the only dynamic field (besides rare package changes)
             # It's Active until the account becomes inactive
             sa_acct_status = 'Active'
-            
+
             record = {
                 'MONTH': month.strftime('%Y-%m-%d'),
                 'ENTERPRISE_ACCOUNT_ID': ea_id,
@@ -105,10 +113,10 @@ def generate_account_data(non_active_ratio = 0.05):
                 'SA_UBRAND_ID': sa_ubrand_id,
                 'SA_UBRAND_DESCRIPTION': sa_ubrand_description,
                 'SA_ACCT_STATUS': sa_acct_status,
-                'PACKAGE_ID': package_id,
-                'PACKAGE_NAME': package_name,
-                'CATALOG_PACKAGE_ID': catalog_package_id,
-                'CATALOG_PACKAGE_NAME': catalog_package_name,
+                'PACKAGE_ID': current_package_id,
+                'PACKAGE_NAME': current_package_name,
+                'CATALOG_PACKAGE_ID': current_catalog_package_id,
+                'CATALOG_PACKAGE_NAME': current_catalog_package_name,
                 'IS_TESTER': is_tester,
                 'TIER_ID': tier_id,
                 'TIER_NAME': tier_name,
@@ -122,7 +130,7 @@ def generate_account_data(non_active_ratio = 0.05):
         # If account became inactive, add the final record with non-active status
         if will_become_inactive and inactive_from_month:
             non_active_status = random.choice(['Suspended', 'Closed'])
-            
+
             record = {
                 'MONTH': inactive_from_month.strftime('%Y-%m-%d'),
                 'ENTERPRISE_ACCOUNT_ID': ea_id,
@@ -138,10 +146,10 @@ def generate_account_data(non_active_ratio = 0.05):
                 'SA_UBRAND_ID': sa_ubrand_id,
                 'SA_UBRAND_DESCRIPTION': sa_ubrand_description,
                 'SA_ACCT_STATUS': non_active_status,  # Non-active status
-                'PACKAGE_ID': package_id,
-                'PACKAGE_NAME': package_name,
-                'CATALOG_PACKAGE_ID': catalog_package_id,
-                'CATALOG_PACKAGE_NAME': catalog_package_name,
+                'PACKAGE_ID': current_package_id,
+                'PACKAGE_NAME': current_package_name,
+                'CATALOG_PACKAGE_ID': current_catalog_package_id,
+                'CATALOG_PACKAGE_NAME': current_catalog_package_name,
                 'IS_TESTER': is_tester,
                 'TIER_ID': tier_id,
                 'TIER_NAME': tier_name,
