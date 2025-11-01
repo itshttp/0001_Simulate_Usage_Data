@@ -1300,39 +1300,43 @@ def show_account_lookup(account_df, usage_df, churn_df):
         col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 0.5])
 
         with col1:
-            if st.button("📊 Account Status", use_container_width=True):
+            if st.button("📊 Account Status", use_container_width=True, key="btn_status"):
                 # Add to existing text with proper formatting
                 if st.session_state.prompt_text:
                     st.session_state.prompt_text += "\n\n" + default_prompts["📊 Account Status"]
                 else:
                     st.session_state.prompt_text = default_prompts["📊 Account Status"]
+                st.rerun()
         with col2:
-            if st.button("📈 Trend Analysis", use_container_width=True):
+            if st.button("📈 Trend Analysis", use_container_width=True, key="btn_trend"):
                 if st.session_state.prompt_text:
                     st.session_state.prompt_text += "\n\n" + default_prompts["📈 Trend Analysis"]
                 else:
                     st.session_state.prompt_text = default_prompts["📈 Trend Analysis"]
+                st.rerun()
         with col3:
-            if st.button("🔮 Future Performance", use_container_width=True):
+            if st.button("🔮 Future Performance", use_container_width=True, key="btn_future"):
                 if st.session_state.prompt_text:
                     st.session_state.prompt_text += "\n\n" + default_prompts["🔮 Future Performance"]
                 else:
                     st.session_state.prompt_text = default_prompts["🔮 Future Performance"]
+                st.rerun()
         with col4:
-            if st.button("⚡ Next Actions", use_container_width=True):
+            if st.button("⚡ Next Actions", use_container_width=True, key="btn_actions"):
                 if st.session_state.prompt_text:
                     st.session_state.prompt_text += "\n\n" + default_prompts["⚡ Next Actions"]
                 else:
                     st.session_state.prompt_text = default_prompts["⚡ Next Actions"]
+                st.rerun()
         with col5:
-            if st.button("🗑️ Clear", use_container_width=True, help="Clear all prompts"):
+            if st.button("🗑️ Clear", use_container_width=True, help="Clear all prompts", key="btn_clear"):
                 st.session_state.prompt_text = ""
+                st.rerun()
 
         # User prompt input using session state
         user_prompt = st.text_area(
             "Ask about this account's usage patterns and trends",
             value=st.session_state.prompt_text,
-            key="prompt_input",
             placeholder="Click suggested prompts above to add them, or write your own questions...",
             height=150,
             help="Click prompt buttons above to add questions. Multiple clicks will add multiple prompts."
