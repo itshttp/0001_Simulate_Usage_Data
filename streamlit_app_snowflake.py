@@ -1265,7 +1265,7 @@ def show_account_lookup(account_df, usage_df, churn_df):
                 model_options = []
                 for model in available_models:
                     if model in model_pricing:
-                        price_info = f" (${model_pricing[model]['cost']:.2f}/{model_pricing[model]['per']})"
+                        price_info = f" (~${model_pricing[model]['cost']:.2f}/{model_pricing[model]['per']} est.)"
                         model_options.append(f"{model}{price_info}")
                     else:
                         model_options.append(model)
@@ -1274,7 +1274,7 @@ def show_account_lookup(account_df, usage_df, churn_df):
                     "Select AI Model",
                     options=model_options,
                     index=0,
-                    help="Choose the AI model from Snowflake Cortex to analyze account insights"
+                    help="Choose the AI model from Snowflake Cortex. Pricing shown is estimated based on Snowflake documentation."
                 )
 
                 # Extract actual model name (remove pricing info)
@@ -1283,8 +1283,12 @@ def show_account_lookup(account_df, usage_df, churn_df):
                 st.error("⚠️ No LLM models available. Please check your Snowflake Cortex configuration.")
                 llm_provider = None
 
+        # Initialize session state for prompt text
+        if 'prompt_text' not in st.session_state:
+            st.session_state.prompt_text = ""
+
         # Default prompt suggestions
-        st.markdown("**💡 Suggested Prompts (click to use):**")
+        st.markdown("**💡 Suggested Prompts (click to add):**")
 
         default_prompts = {
             "📊 Account Status": "Provide a comprehensive analysis of this account's current status, including health indicators, engagement level, and any red flags or positive signals.",
@@ -1293,30 +1297,50 @@ def show_account_lookup(account_df, usage_df, churn_df):
             "⚡ Next Actions": "What are the recommended next actions for this account? Consider account health, usage patterns, and business objectives to suggest concrete steps."
         }
 
-        col1, col2, col3, col4 = st.columns(4)
-        selected_prompt = ""
+        col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 0.5])
 
         with col1:
             if st.button("📊 Account Status", use_container_width=True):
-                selected_prompt = default_prompts["📊 Account Status"]
+                # Add to existing text with proper formatting
+                if st.session_state.prompt_text:
+                    st.session_state.prompt_text += "\n\n" + default_prompts["📊 Account Status"]
+                else:
+                    st.session_state.prompt_text = default_prompts["📊 Account Status"]
         with col2:
             if st.button("📈 Trend Analysis", use_container_width=True):
-                selected_prompt = default_prompts["📈 Trend Analysis"]
+                if st.session_state.prompt_text:
+                    st.session_state.prompt_text += "\n\n" + default_prompts["📈 Trend Analysis"]
+                else:
+                    st.session_state.prompt_text = default_prompts["📈 Trend Analysis"]
         with col3:
             if st.button("🔮 Future Performance", use_container_width=True):
-                selected_prompt = default_prompts["🔮 Future Performance"]
+                if st.session_state.prompt_text:
+                    st.session_state.prompt_text += "\n\n" + default_prompts["🔮 Future Performance"]
+                else:
+                    st.session_state.prompt_text = default_prompts["🔮 Future Performance"]
         with col4:
             if st.button("⚡ Next Actions", use_container_width=True):
-                selected_prompt = default_prompts["⚡ Next Actions"]
+                if st.session_state.prompt_text:
+                    st.session_state.prompt_text += "\n\n" + default_prompts["⚡ Next Actions"]
+                else:
+                    st.session_state.prompt_text = default_prompts["⚡ Next Actions"]
+        with col5:
+            if st.button("🗑️ Clear", use_container_width=True, help="Clear all prompts"):
+                st.session_state.prompt_text = ""
 
-        # User prompt input
+        # User prompt input using session state
         user_prompt = st.text_area(
             "Ask about this account's usage patterns and trends",
-            value=selected_prompt,
-            placeholder="Click a suggested prompt above or write your own question...",
-            height=100,
-            help="Enter your question about the account's usage data and trends"
+            value=st.session_state.prompt_text,
+            key="prompt_input",
+            placeholder="Click suggested prompts above to add them, or write your own questions...",
+            height=150,
+            help="Click prompt buttons above to add questions. Multiple clicks will add multiple prompts."
         )
+
+        # Update session state when user types manually
+        if user_prompt != st.session_state.prompt_text:
+            st.session_state.prompt_text = user_prompt
         
         # Generate insights button
         if st.button("💡 Generate Insights", type="primary", use_container_width=True):
@@ -1339,30 +1363,45 @@ def show_account_lookup(account_df, usage_df, churn_df):
 
                     # Display token usage and cost estimation
                     st.markdown("---")
-                    st.markdown("#### 💰 Token Usage & Cost Estimation")
+                    st.markdown("#### 💰 Token Usage & Cost Summary")
 
                     col1, col2, col3, col4 = st.columns(4)
 
                     with col1:
-                        st.metric("Input Tokens", f"{input_tokens:,}")
+                        st.metric("Input Tokens", f"{input_tokens:,}",
+                                 help="Estimated tokens in your prompt and context")
                     with col2:
-                        st.metric("Output Tokens", f"{output_tokens:,}")
+                        st.metric("Output Tokens", f"{output_tokens:,}",
+                                 help="Estimated tokens in the AI response")
                     with col3:
                         total_tokens = input_tokens + output_tokens
-                        st.metric("Total Tokens", f"{total_tokens:,}")
+                        st.metric("Total Tokens", f"{total_tokens:,}",
+                                 help="Sum of input and output tokens")
                     with col4:
                         # Calculate estimated cost based on model pricing
                         if llm_provider in model_pricing:
                             cost_per_million = model_pricing[llm_provider]["cost"]
                             estimated_cost = (total_tokens / 1_000_000) * cost_per_million
-                            st.metric("Estimated Cost", f"${estimated_cost:.4f}")
+                            st.metric("Estimated Price", f"${estimated_cost:.6f}",
+                                     help="Approximate cost based on published Snowflake Cortex pricing")
                         else:
-                            st.metric("Estimated Cost", "N/A")
+                            st.metric("Estimated Price", "N/A",
+                                     help="Pricing information not available for this model")
 
-                    # Additional cost information
+                    # Additional cost information with clear labeling
                     if llm_provider in model_pricing:
-                        st.caption(f"💡 Pricing: ${model_pricing[llm_provider]['cost']:.2f} per {model_pricing[llm_provider]['per']}")
-                    st.caption("⚠️ Note: Token counts are estimated. Actual counts may vary slightly.")
+                        st.info(f"""
+                        **💡 Pricing Details (Estimated):**
+                        - Model: {llm_provider}
+                        - Rate: ${model_pricing[llm_provider]['cost']:.2f} per {model_pricing[llm_provider]['per']}
+                        - Tokens Used: {total_tokens:,} ({input_tokens:,} input + {output_tokens:,} output)
+                        - Estimated Cost: ${estimated_cost:.6f}
+
+                        ⚠️ **Note:** Token counts and pricing are estimates based on Snowflake documentation.
+                        Actual usage and costs may vary. Check your Snowflake account for accurate billing information.
+                        """)
+                    else:
+                        st.caption("⚠️ Note: Token counts are estimated (1 token ≈ 4 characters). Pricing information not available for this model.")
             else:
                 st.warning("Please enter a question before generating insights.")
         
