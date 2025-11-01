@@ -1,0 +1,82 @@
+================================================================================
+QUICK DEPLOY TO SNOWFLAKE STREAMLIT - COPY & PASTE GUIDE
+================================================================================
+
+STEP 1: Log into Snowflake
+---------------------------
+URL: https://app.snowflake.com/FOB96555/ehb83410/
+
+
+STEP 2: Create Streamlit App
+-----------------------------
+1. Click "Streamlit" in left sidebar
+2. Click "+ Streamlit App" button
+3. Fill in:
+   - Name: Phone Usage Analytics
+   - Warehouse: MY_FIRST_WH
+   - Database: MY_DATABASE
+   - Schema: PUBLIC
+4. Click "Packages" and add:
+   plotly
+5. Click "Create"
+
+
+STEP 3: Copy the Code
+----------------------
+1. Open file: streamlit_app_snowflake.py
+2. Select all (Ctrl+A / Cmd+A)
+3. Copy (Ctrl+C / Cmd+C)
+
+
+STEP 4: Paste in Snowflake
+---------------------------
+1. In Snowflake editor, delete all default code
+2. Paste your copied code (Ctrl+V / Cmd+V)
+3. Click "Run" button (top right)
+
+
+STEP 5: Wait for It to Load
+----------------------------
+The dashboard will start in ~10 seconds!
+
+
+THAT'S IT! 🎉
+-------------
+Your dashboard is now live in Snowflake!
+
+Share the URL with your team - they can access it instantly
+(no setup required for them!)
+
+
+DASHBOARD FEATURES:
+-------------------
+- 🏠 Overview: KPIs and trends
+- 👥 Account Analytics: Distribution and growth
+- 📈 Usage Trends: Time series with filters
+- ⚠️ Churn Analysis: Patterns and predictions
+- 🎯 User Segmentation: Heavy/medium/light users
+
+
+TROUBLESHOOTING:
+----------------
+❌ Error: "Table not found"
+   → Check tables exist: SELECT * FROM PHONE_USAGE_DATA LIMIT 1;
+
+❌ Error: "Permission denied"
+   → Grant access: GRANT SELECT ON ALL TABLES IN SCHEMA PUBLIC TO ROLE YOUR_ROLE;
+
+❌ No data showing
+   → Verify data: python snowflake_loader.py --summary
+
+❌ Slow performance
+   → Use larger warehouse or add date filters
+
+
+NEED MORE HELP?
+---------------
+See: SNOWFLAKE_STREAMLIT_DEPLOYMENT.md
+
+
+================================================================================
+Happy analyzing! 📊
+================================================================================

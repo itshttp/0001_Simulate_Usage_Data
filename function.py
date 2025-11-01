@@ -57,7 +57,8 @@ def generate_account_data(non_active_ratio = 0.05):
         ea_acct_status = 'Active'  # EA status is always Active
         
         # Service account attributes - FIXED for this customer
-        service_account_id = random.randint(1000, 9999)
+        # Use sequential IDs starting from 1000 to ensure unique service accounts
+        service_account_id = 1000 + ea_id - 1
         sa_brand_id, sa_brand_name = random.choice(BRANDS)
         sa_ubrand_id, sa_ubrand_description = random.choice(UBRANDS)
         

@@ -13,3 +13,11 @@ seaborn>=0.12.0
 jupyter>=1.0.0
 ipykernel>=6.0.0
 
+# Snowflake integration (optional, for database loading)
+snowflake-connector-python>=3.0.0
+python-dotenv>=1.0.0
+
+# Streamlit dashboard (optional, for interactive analytics)
+streamlit>=1.28.0
+plotly>=5.17.0
+
