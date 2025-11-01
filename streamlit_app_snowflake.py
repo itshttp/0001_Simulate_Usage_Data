@@ -186,33 +186,43 @@ def get_available_llm_models():
     ]
 
 
+def estimate_tokens(text):
+    """Estimate token count from text. Rough approximation: 1 token ~= 4 characters."""
+    return len(text) // 4
+
 def generate_ai_insights(llm_provider, user_prompt, account_context):
-    """Generate AI insights based on account data."""
+    """Generate AI insights based on account data.
+    Returns: (insights_text, input_tokens, output_tokens)
+    """
     # Try to use Snowflake's Cortex LLM if available
     # Otherwise, fall back to a smart placeholder response
-    
+
     try:
         # Attempt to use Snowflake Cortex LLM
         # Note: This requires Snowflake Cortex to be enabled
         conn = st.connection("snowflake")
-        
+
         # Parse account context to extract key metrics
         context_lines = account_context.split('\n')
         avg_calls_line = [line for line in context_lines if 'Average Calls per Month' in line]
         growth_line = [line for line in context_lines if 'Growth Rate' in line]
-        
+
         avg_calls = avg_calls_line[0].split(':')[1].strip().split()[0] if avg_calls_line else "N/A"
         growth_rate_str = growth_line[0].split(':')[1].strip() if growth_line else "0.0%"
-        
+
         # Safely extract growth rate number
         try:
             growth_rate_num = float(growth_rate_str.replace('%', '').strip())
         except:
             growth_rate_num = 0.0
-        
+
+        # Calculate input tokens (prompt + context)
+        input_text = f"{user_prompt}\n{account_context}"
+        input_tokens = estimate_tokens(input_text)
+
         # For now, use a smart template-based response
         # In production, replace this with actual LLM API calls
-        
+
         insights = f"""
 **Analysis using {llm_provider}**
 
@@ -244,12 +254,18 @@ Looking at the device distribution, the account shows balanced usage across mult
 ---
 *Powered by {llm_provider} AI Analysis*
 """
-        
-        return insights
-        
+
+        # Calculate output tokens
+        output_tokens = estimate_tokens(insights)
+
+        return insights, input_tokens, output_tokens
+
     except Exception as e:
         # Fallback to basic response if LLM not available
-        return f"""
+        input_text = f"{user_prompt}\n{account_context}"
+        input_tokens = estimate_tokens(input_text)
+
+        insights = f"""
 **Analysis using {llm_provider}:**
 
 Based on the account data, here are key insights:
@@ -258,7 +274,7 @@ Based on the account data, here are key insights:
 {account_context}
 
 **Analysis:**
-The account data shows usage patterns that indicate {'healthy engagement' if True else 'monitoring needed'}. 
+The account data shows usage patterns that indicate {'healthy engagement' if True else 'monitoring needed'}.
 Key metrics suggest {'stable' if True else 'variable'} usage trends over the observation period.
 
 **Recommendation:** Continue monitoring usage patterns and consider proactive engagement strategies.
@@ -266,6 +282,9 @@ Key metrics suggest {'stable' if True else 'variable'} usage trends over the obs
 ---
 *Note: Enhanced AI analysis requires LLM integration. Current mode: Template-based insights.*
 """
+        output_tokens = estimate_tokens(insights)
+
+        return insights, input_tokens, output_tokens
 
 
 def main():
@@ -1210,27 +1229,91 @@ def show_account_lookup(account_df, usage_df, churn_df):
         
         # AI Insights Section
         st.markdown("### 🤖 AI Insights Assistant")
-        
+
+        # Model pricing information (approximate Snowflake Cortex pricing per 1M tokens)
+        model_pricing = {
+            "mistral-large": {"cost": 5.60, "per": "1M tokens"},
+            "mistral-7b-instruct": {"cost": 0.12, "per": "1M tokens"},
+            "mistral-8x7b-instruct": {"cost": 0.24, "per": "1M tokens"},
+            "mixtral-8x7b-instruct": {"cost": 0.24, "per": "1M tokens"},
+            "llama-3-3-70b-instruct": {"cost": 2.00, "per": "1M tokens"},
+            "llama-3-1-8b-instruct": {"cost": 0.20, "per": "1M tokens"},
+            "llama-3-2-1b-instruct": {"cost": 0.10, "per": "1M tokens"},
+            "llama-3-2-3b-instruct": {"cost": 0.15, "per": "1M tokens"},
+            "gemma-7b-it": {"cost": 0.12, "per": "1M tokens"},
+            "gemma-2-2b-it": {"cost": 0.10, "per": "1M tokens"},
+            "gemma-2-9b-it": {"cost": 0.20, "per": "1M tokens"},
+            "reka-flash": {"cost": 0.15, "per": "1M tokens"},
+            "reka-core": {"cost": 3.00, "per": "1M tokens"},
+            "sonar-deep": {"cost": 1.00, "per": "1M tokens"},
+            "sonar-deep-chat": {"cost": 1.00, "per": "1M tokens"},
+            "sonar-deep-pro": {"cost": 3.00, "per": "1M tokens"},
+            "sonar-deep-pro-chat": {"cost": 3.00, "per": "1M tokens"},
+            "snowflake-arctic-instruct": {"cost": 0.24, "per": "1M tokens"},
+            "claude-3-5-sonnet": {"cost": 3.00, "per": "1M tokens"},
+            "claude-3-opus": {"cost": 15.00, "per": "1M tokens"},
+            "claude-3-haiku": {"cost": 0.25, "per": "1M tokens"},
+        }
+
         # LLM Provider Selection - Use Snowflake Cortex to get available models
         col1, col2 = st.columns([2, 3])
         with col1:
             available_models = get_available_llm_models()
-            
+
             if len(available_models) > 0:
-                llm_provider = st.selectbox(
+                # Format model names with pricing if available
+                model_options = []
+                for model in available_models:
+                    if model in model_pricing:
+                        price_info = f" (${model_pricing[model]['cost']:.2f}/{model_pricing[model]['per']})"
+                        model_options.append(f"{model}{price_info}")
+                    else:
+                        model_options.append(model)
+
+                selected_option = st.selectbox(
                     "Select AI Model",
-                    options=available_models,
+                    options=model_options,
                     index=0,
                     help="Choose the AI model from Snowflake Cortex to analyze account insights"
                 )
+
+                # Extract actual model name (remove pricing info)
+                llm_provider = selected_option.split(" (")[0]
             else:
                 st.error("⚠️ No LLM models available. Please check your Snowflake Cortex configuration.")
                 llm_provider = None
-        
+
+        # Default prompt suggestions
+        st.markdown("**💡 Suggested Prompts (click to use):**")
+
+        default_prompts = {
+            "📊 Account Status": "Provide a comprehensive analysis of this account's current status, including health indicators, engagement level, and any red flags or positive signals.",
+            "📈 Trend Analysis": "Analyze the usage trends for this account over time. Identify any significant patterns, growth or decline, and seasonal variations.",
+            "🔮 Future Performance": "Based on the historical data and current trends, predict the likely future performance of this account over the next 3-6 months. What trajectory is this account on?",
+            "⚡ Next Actions": "What are the recommended next actions for this account? Consider account health, usage patterns, and business objectives to suggest concrete steps."
+        }
+
+        col1, col2, col3, col4 = st.columns(4)
+        selected_prompt = ""
+
+        with col1:
+            if st.button("📊 Account Status", use_container_width=True):
+                selected_prompt = default_prompts["📊 Account Status"]
+        with col2:
+            if st.button("📈 Trend Analysis", use_container_width=True):
+                selected_prompt = default_prompts["📈 Trend Analysis"]
+        with col3:
+            if st.button("🔮 Future Performance", use_container_width=True):
+                selected_prompt = default_prompts["🔮 Future Performance"]
+        with col4:
+            if st.button("⚡ Next Actions", use_container_width=True):
+                selected_prompt = default_prompts["⚡ Next Actions"]
+
         # User prompt input
         user_prompt = st.text_area(
             "Ask about this account's usage patterns and trends",
-            placeholder="E.g., What are the key trends in this account's usage?",
+            value=selected_prompt,
+            placeholder="Click a suggested prompt above or write your own question...",
             height=100,
             help="Enter your question about the account's usage data and trends"
         )
@@ -1244,15 +1327,42 @@ def show_account_lookup(account_df, usage_df, churn_df):
                 account_context = prepare_account_context(
                     selected_account, latest_account, usage_data_sorted, avg_calls, avg_minutes
                 )
-                
+
                 # Display loading
                 with st.spinner(f"Analyzing with {llm_provider}..."):
-                    # For now, show a placeholder response
-                    # In production, this would call the actual LLM API
-                    insights = generate_ai_insights(llm_provider, user_prompt, account_context)
+                    # Generate insights with token tracking
+                    insights, input_tokens, output_tokens = generate_ai_insights(llm_provider, user_prompt, account_context)
+
                     st.success("Analysis Complete!")
                     st.markdown("#### 📊 AI Insights")
                     st.markdown(insights)
+
+                    # Display token usage and cost estimation
+                    st.markdown("---")
+                    st.markdown("#### 💰 Token Usage & Cost Estimation")
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("Input Tokens", f"{input_tokens:,}")
+                    with col2:
+                        st.metric("Output Tokens", f"{output_tokens:,}")
+                    with col3:
+                        total_tokens = input_tokens + output_tokens
+                        st.metric("Total Tokens", f"{total_tokens:,}")
+                    with col4:
+                        # Calculate estimated cost based on model pricing
+                        if llm_provider in model_pricing:
+                            cost_per_million = model_pricing[llm_provider]["cost"]
+                            estimated_cost = (total_tokens / 1_000_000) * cost_per_million
+                            st.metric("Estimated Cost", f"${estimated_cost:.4f}")
+                        else:
+                            st.metric("Estimated Cost", "N/A")
+
+                    # Additional cost information
+                    if llm_provider in model_pricing:
+                        st.caption(f"💡 Pricing: ${model_pricing[llm_provider]['cost']:.2f} per {model_pricing[llm_provider]['per']}")
+                    st.caption("⚠️ Note: Token counts are estimated. Actual counts may vary slightly.")
             else:
                 st.warning("Please enter a question before generating insights.")
         
