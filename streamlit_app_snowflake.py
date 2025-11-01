@@ -279,7 +279,7 @@ def main():
     page = st.sidebar.radio(
         "Navigation",
         ["🏠 Overview", "👥 Account Analytics", "📈 Usage Trends",
-         "⚠️ Churn Analysis", "🎯 User Segmentation", "🔍 Account Lookup"]
+         "⚠️ Churn Analysis", "🎯 User Segmentation", "📅 Vintage Analysis", "🔍 Account Lookup"]
     )
 
     # Load data
@@ -344,6 +344,8 @@ def main():
         show_churn_analysis(usage_df, churn_df)
     elif page == "🎯 User Segmentation":
         show_user_segmentation(usage_df)
+    elif page == "📅 Vintage Analysis":
+        show_vintage_analysis(account_df, churn_df)
     elif page == "🔍 Account Lookup":
         show_account_lookup(account_df, usage_df, churn_df)
 
@@ -818,6 +820,229 @@ def show_user_segmentation(usage_df):
     segment_stats = segment_stats.reset_index()
 
     st.dataframe(segment_stats, use_container_width=True)
+
+
+def show_vintage_analysis(account_df, churn_df):
+    """Vintage analysis page showing cohort-based churn by signup month."""
+    st.title("📅 Vintage Analysis")
+
+    st.markdown("""
+    Vintage (cohort) analysis tracks cumulative churn rates by signup month.
+    Each vintage represents accounts that signed up in the same month.
+    The X-axis shows tenure (months since signup), starting at 0.
+    """)
+
+    # Step 1: Determine signup month (first month) for each account
+    signup_data = account_df.groupby('SERVICE_ACCOUNT_ID')['MONTH'].min().reset_index()
+    signup_data.columns = ['SERVICE_ACCOUNT_ID', 'SIGNUP_MONTH']
+    signup_data['VINTAGE'] = signup_data['SIGNUP_MONTH'].dt.to_period('M').astype(str)
+
+    # Step 2: Merge signup data with all account data
+    account_with_vintage = account_df.merge(
+        signup_data[['SERVICE_ACCOUNT_ID', 'SIGNUP_MONTH', 'VINTAGE']],
+        on='SERVICE_ACCOUNT_ID'
+    )
+
+    # Step 3: Calculate tenure (months since signup)
+    account_with_vintage['TENURE'] = (
+        (account_with_vintage['MONTH'].dt.year - account_with_vintage['SIGNUP_MONTH'].dt.year) * 12 +
+        (account_with_vintage['MONTH'].dt.month - account_with_vintage['SIGNUP_MONTH'].dt.month)
+    )
+
+    # Step 4: Merge with churn data
+    account_with_vintage = account_with_vintage.merge(
+        churn_df[['USERID', 'CHURN_DATE']],
+        left_on='SERVICE_ACCOUNT_ID',
+        right_on='USERID',
+        how='left'
+    )
+
+    # Calculate churn month tenure (months from signup to churn)
+    account_with_vintage['CHURNED'] = account_with_vintage['CHURN_DATE'].notna()
+    account_with_vintage['CHURN_TENURE'] = account_with_vintage.apply(
+        lambda row: (
+            (row['CHURN_DATE'].year - row['SIGNUP_MONTH'].year) * 12 +
+            (row['CHURN_DATE'].month - row['SIGNUP_MONTH'].month)
+        ) if pd.notna(row['CHURN_DATE']) else None,
+        axis=1
+    )
+
+    # Metrics selector
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        metric_type = st.radio(
+            "Select Metric",
+            ["By Account Count", "By Revenue (if available)"],
+            horizontal=True
+        )
+
+    with col2:
+        min_cohort_size = st.number_input(
+            "Min Cohort Size",
+            min_value=1,
+            max_value=1000,
+            value=10,
+            help="Only show vintages with at least this many accounts"
+        )
+
+    # Calculate cohort statistics
+    st.markdown("---")
+    st.subheader("Cohort Overview")
+
+    # Get cohort sizes
+    cohort_sizes = signup_data.groupby('VINTAGE').size().reset_index()
+    cohort_sizes.columns = ['VINTAGE', 'COHORT_SIZE']
+    cohort_sizes = cohort_sizes[cohort_sizes['COHORT_SIZE'] >= min_cohort_size]
+    cohort_sizes = cohort_sizes.sort_values('VINTAGE')
+
+    if cohort_sizes.empty:
+        st.warning("No cohorts found matching the criteria.")
+        return
+
+    # Display cohort summary
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Vintages", len(cohort_sizes))
+    with col2:
+        st.metric("Earliest Vintage", cohort_sizes['VINTAGE'].min())
+    with col3:
+        st.metric("Latest Vintage", cohort_sizes['VINTAGE'].max())
+
+    # Step 5: Calculate cumulative churn by vintage and tenure
+    st.markdown("---")
+    st.subheader("Cumulative Churn Rate by Tenure")
+
+    # For each vintage and tenure, calculate cumulative churn rate
+    churn_by_vintage_tenure = []
+
+    for vintage in cohort_sizes['VINTAGE'].values:
+        # Get all accounts in this vintage
+        vintage_accounts = account_with_vintage[account_with_vintage['VINTAGE'] == vintage]
+        total_accounts = vintage_accounts['SERVICE_ACCOUNT_ID'].nunique()
+
+        # Get max tenure for this vintage
+        max_tenure = vintage_accounts['TENURE'].max()
+
+        # For each tenure month
+        for tenure in range(0, int(max_tenure) + 1):
+            # Count accounts that had churned by this tenure
+            churned_by_tenure = vintage_accounts[
+                (vintage_accounts['CHURNED']) &
+                (vintage_accounts['CHURN_TENURE'] <= tenure)
+            ]['SERVICE_ACCOUNT_ID'].nunique()
+
+            cumulative_churn_rate = (churned_by_tenure / total_accounts * 100) if total_accounts > 0 else 0
+
+            churn_by_vintage_tenure.append({
+                'VINTAGE': vintage,
+                'TENURE': tenure,
+                'TOTAL_ACCOUNTS': total_accounts,
+                'CHURNED_ACCOUNTS': churned_by_tenure,
+                'CUMULATIVE_CHURN_RATE': cumulative_churn_rate
+            })
+
+    churn_df_analysis = pd.DataFrame(churn_by_vintage_tenure)
+
+    if churn_df_analysis.empty:
+        st.warning("No churn data available for analysis.")
+        return
+
+    # Visualization
+    st.markdown("### Vintage Cohort Churn Curves")
+
+    # Pivot data for line chart
+    churn_pivot = churn_df_analysis.pivot(
+        index='TENURE',
+        columns='VINTAGE',
+        values='CUMULATIVE_CHURN_RATE'
+    )
+
+    # Plot
+    st.line_chart(churn_pivot, height=500)
+
+    st.caption("Each line represents a vintage cohort. X-axis shows months since signup (tenure). Y-axis shows cumulative churn rate (%).")
+
+    # Option to select specific vintages
+    st.markdown("---")
+    st.subheader("Compare Specific Vintages")
+
+    selected_vintages = st.multiselect(
+        "Select vintages to compare",
+        options=sorted(cohort_sizes['VINTAGE'].unique()),
+        default=sorted(cohort_sizes['VINTAGE'].unique())[:5] if len(cohort_sizes) >= 5 else sorted(cohort_sizes['VINTAGE'].unique())
+    )
+
+    if selected_vintages:
+        # Filter data
+        filtered_churn = churn_df_analysis[churn_df_analysis['VINTAGE'].isin(selected_vintages)]
+
+        # Pivot and plot
+        filtered_pivot = filtered_churn.pivot(
+            index='TENURE',
+            columns='VINTAGE',
+            values='CUMULATIVE_CHURN_RATE'
+        )
+
+        st.line_chart(filtered_pivot, height=500)
+
+        # Show data table
+        st.markdown("### Detailed Churn Data")
+
+        # Display summary for selected vintages
+        summary_data = []
+        for vintage in selected_vintages:
+            vintage_data = filtered_churn[filtered_churn['VINTAGE'] == vintage]
+            if not vintage_data.empty:
+                max_tenure_data = vintage_data[vintage_data['TENURE'] == vintage_data['TENURE'].max()].iloc[0]
+                summary_data.append({
+                    'Vintage': vintage,
+                    'Total Accounts': int(max_tenure_data['TOTAL_ACCOUNTS']),
+                    'Max Tenure (Months)': int(max_tenure_data['TENURE']),
+                    'Final Churn Rate (%)': round(max_tenure_data['CUMULATIVE_CHURN_RATE'], 2),
+                    'Churned Accounts': int(max_tenure_data['CHURNED_ACCOUNTS'])
+                })
+
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, use_container_width=True)
+
+        # Optionally show raw data
+        with st.expander("Show Raw Cohort Data"):
+            display_data = filtered_churn.pivot_table(
+                index='TENURE',
+                columns='VINTAGE',
+                values='CUMULATIVE_CHURN_RATE',
+                aggfunc='first'
+            ).round(2)
+            st.dataframe(display_data, use_container_width=True)
+
+    # Additional insights
+    st.markdown("---")
+    st.subheader("Vintage Performance Insights")
+
+    # Calculate churn rate at specific tenure milestones
+    milestones = [6, 12, 24, 36]  # 6 months, 1 year, 2 years, 3 years
+
+    milestone_data = []
+    for vintage in cohort_sizes['VINTAGE'].values[:10]:  # Top 10 vintages
+        vintage_churn = churn_df_analysis[churn_df_analysis['VINTAGE'] == vintage]
+        if vintage_churn.empty:
+            continue
+
+        row = {'Vintage': vintage}
+        for milestone in milestones:
+            milestone_churn = vintage_churn[vintage_churn['TENURE'] == milestone]
+            if not milestone_churn.empty:
+                row[f'{milestone}M Churn %'] = round(milestone_churn.iloc[0]['CUMULATIVE_CHURN_RATE'], 2)
+            else:
+                row[f'{milestone}M Churn %'] = None
+        milestone_data.append(row)
+
+    if milestone_data:
+        milestone_df = pd.DataFrame(milestone_data)
+        st.dataframe(milestone_df, use_container_width=True)
+        st.caption("Churn rates at key tenure milestones (6, 12, 24, 36 months)")
 
 
 def show_account_lookup(account_df, usage_df, churn_df):
