@@ -949,43 +949,118 @@ def show_vintage_analysis(account_df, churn_df):
         st.warning("No churn data available for analysis.")
         return
 
-    # Visualization
-    st.markdown("### Vintage Cohort Churn Curves")
-
-    # Pivot data for line chart
-    churn_pivot = churn_df_analysis.pivot(
-        index='TENURE',
-        columns='VINTAGE',
-        values='CUMULATIVE_CHURN_RATE'
-    )
-
-    # Plot
-    st.line_chart(churn_pivot, height=500)
-
-    st.caption("Each line represents a vintage cohort. X-axis shows months since signup (tenure). Y-axis shows cumulative churn rate (%).")
+    # Get max tenure across all data for chart limits
+    max_tenure_overall = int(churn_df_analysis['TENURE'].max())
 
     # Option to select specific vintages
     st.markdown("---")
-    st.subheader("Compare Specific Vintages")
+    st.subheader("Select Vintages to Analyze")
 
-    selected_vintages = st.multiselect(
-        "Select vintages to compare",
-        options=sorted(cohort_sizes['VINTAGE'].unique()),
-        default=sorted(cohort_sizes['VINTAGE'].unique())[:5] if len(cohort_sizes) >= 5 else sorted(cohort_sizes['VINTAGE'].unique())
-    )
+    # Filter options
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        filter_type = st.radio(
+            "Filter Vintages By:",
+            ["Manual Selection", "By Quarter", "By Year", "By Segment"],
+            horizontal=False
+        )
+
+    # Prepare vintage list based on filter type
+    available_vintages = sorted(cohort_sizes['VINTAGE'].unique())
+
+    if filter_type == "By Quarter":
+        with col2:
+            # Extract unique quarters
+            quarters = sorted(list(set([v[:4] + '-Q' + str((int(v[5:7])-1)//3 + 1) for v in available_vintages])))
+            selected_quarters = st.multiselect(
+                "Select Quarters",
+                options=quarters,
+                default=quarters[-4:] if len(quarters) >= 4 else quarters
+            )
+
+        # Filter vintages by selected quarters
+        selected_vintages = []
+        for vintage in available_vintages:
+            year = vintage[:4]
+            month = int(vintage[5:7])
+            quarter = f"{year}-Q{(month-1)//3 + 1}"
+            if quarter in selected_quarters:
+                selected_vintages.append(vintage)
+
+    elif filter_type == "By Year":
+        with col2:
+            # Extract unique years
+            years = sorted(list(set([v[:4] for v in available_vintages])))
+            selected_years = st.multiselect(
+                "Select Years",
+                options=years,
+                default=years[-2:] if len(years) >= 2 else years
+            )
+
+        # Filter vintages by selected years
+        selected_vintages = [v for v in available_vintages if v[:4] in selected_years]
+
+    elif filter_type == "By Segment":
+        with col2:
+            segment_option = st.selectbox(
+                "Segment By:",
+                ["Package", "Company", "Tier"]
+            )
+
+        with col3:
+            # Get segment values from account data
+            if segment_option == "Package":
+                segment_col = 'PACKAGE_NAME'
+            elif segment_option == "Company":
+                segment_col = 'COMPANY'
+            else:  # Tier
+                segment_col = 'TIER_NAME'
+
+            # Get unique segment values
+            segment_values = sorted(account_df[segment_col].unique())
+            selected_segments = st.multiselect(
+                f"Select {segment_option}(s)",
+                options=segment_values,
+                default=segment_values[:3] if len(segment_values) >= 3 else segment_values
+            )
+
+        # Filter vintages by accounts in selected segments
+        if selected_segments:
+            segment_accounts = account_df[account_df[segment_col].isin(selected_segments)]['SERVICE_ACCOUNT_ID'].unique()
+            segment_vintages = signup_data[signup_data['SERVICE_ACCOUNT_ID'].isin(segment_accounts)]['VINTAGE'].unique()
+            selected_vintages = [v for v in available_vintages if v in segment_vintages]
+        else:
+            selected_vintages = []
+
+    else:  # Manual Selection
+        with col2:
+            selected_vintages = st.multiselect(
+                "Select vintages to compare",
+                options=available_vintages,
+                default=available_vintages[-6:] if len(available_vintages) >= 6 else available_vintages
+            )
+
+    # Display analysis
+    st.markdown("---")
+    st.subheader(f"Vintage Cohort Analysis ({len(selected_vintages)} vintages selected)")
 
     if selected_vintages:
         # Filter data
         filtered_churn = churn_df_analysis[churn_df_analysis['VINTAGE'].isin(selected_vintages)]
 
-        # Pivot and plot
+        # Ensure we have complete tenure range from 0 to max
         filtered_pivot = filtered_churn.pivot(
             index='TENURE',
             columns='VINTAGE',
             values='CUMULATIVE_CHURN_RATE'
         )
 
+        # Reindex to ensure tenure starts at 0 and goes to max_tenure
+        filtered_pivot = filtered_pivot.reindex(range(0, max_tenure_overall + 1), fill_value=None)
+
         st.line_chart(filtered_pivot, height=500)
+        st.caption(f"X-axis: Tenure (0 to {max_tenure_overall} months) | Y-axis: Cumulative churn rate (%)")
 
         # Show data table
         st.markdown("### Detailed Churn Data")
@@ -1016,33 +1091,36 @@ def show_vintage_analysis(account_df, churn_df):
                 aggfunc='first'
             ).round(2)
             st.dataframe(display_data, use_container_width=True)
+    else:
+        st.info("Please select at least one vintage to display the analysis.")
 
     # Additional insights
-    st.markdown("---")
-    st.subheader("Vintage Performance Insights")
+    if selected_vintages:
+        st.markdown("---")
+        st.subheader("Vintage Performance at Key Milestones")
 
-    # Calculate churn rate at specific tenure milestones
-    milestones = [6, 12, 24, 36]  # 6 months, 1 year, 2 years, 3 years
+        # Calculate churn rate at specific tenure milestones
+        milestones = [6, 12, 24, 36]  # 6 months, 1 year, 2 years, 3 years
 
-    milestone_data = []
-    for vintage in cohort_sizes['VINTAGE'].values[:10]:  # Top 10 vintages
-        vintage_churn = churn_df_analysis[churn_df_analysis['VINTAGE'] == vintage]
-        if vintage_churn.empty:
-            continue
+        milestone_data = []
+        for vintage in selected_vintages:
+            vintage_churn = churn_df_analysis[churn_df_analysis['VINTAGE'] == vintage]
+            if vintage_churn.empty:
+                continue
 
-        row = {'Vintage': vintage}
-        for milestone in milestones:
-            milestone_churn = vintage_churn[vintage_churn['TENURE'] == milestone]
-            if not milestone_churn.empty:
-                row[f'{milestone}M Churn %'] = round(milestone_churn.iloc[0]['CUMULATIVE_CHURN_RATE'], 2)
-            else:
-                row[f'{milestone}M Churn %'] = None
-        milestone_data.append(row)
+            row = {'Vintage': vintage}
+            for milestone in milestones:
+                milestone_churn = vintage_churn[vintage_churn['TENURE'] == milestone]
+                if not milestone_churn.empty:
+                    row[f'{milestone}M Churn %'] = round(milestone_churn.iloc[0]['CUMULATIVE_CHURN_RATE'], 2)
+                else:
+                    row[f'{milestone}M Churn %'] = None
+            milestone_data.append(row)
 
-    if milestone_data:
-        milestone_df = pd.DataFrame(milestone_data)
-        st.dataframe(milestone_df, use_container_width=True)
-        st.caption("Churn rates at key tenure milestones (6, 12, 24, 36 months)")
+        if milestone_data:
+            milestone_df = pd.DataFrame(milestone_data)
+            st.dataframe(milestone_df, use_container_width=True)
+            st.caption("Churn rates at key tenure milestones (6, 12, 24, 36 months) for selected vintages")
 
 
 def show_account_lookup(account_df, usage_df, churn_df):
