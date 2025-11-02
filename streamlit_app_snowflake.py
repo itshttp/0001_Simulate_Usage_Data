@@ -14,13 +14,10 @@ Deploy this app in Snowflake Streamlit - no local setup needed!
 import streamlit as st
 import pandas as pd
 
-# Import Snowflake Cortex for LLM model listing
-try:
-    from snowflake.cortex import list_available_models
-    CORTEX_AVAILABLE = True
-except ImportError:
-    CORTEX_AVAILABLE = False
-    list_available_models = None
+# Note: snowflake.cortex Python module is not available in Snowflake Streamlit
+# We'll use SQL-based Cortex calls instead
+CORTEX_AVAILABLE = False  # Python API not available in Streamlit
+CORTEX_SQL_AVAILABLE = None  # Will check via SQL query
 
 # Page configuration
 st.set_page_config(
@@ -122,68 +119,84 @@ Device Usage Breakdown:
 
 
 def get_available_llm_models():
-    """Get list of available LLM models from Snowflake Cortex."""
-    # Always try to get fresh list from Snowflake Cortex first
-    if CORTEX_AVAILABLE and list_available_models:
+    """Get list of available LLM models from Snowflake Cortex.
+
+    Returns tuple: (models_list, source_type)
+    - source_type: 'sql' if from SQL query, 'fallback' if from hardcoded list
+    """
+    global CORTEX_SQL_AVAILABLE
+
+    # Try querying Snowflake Cortex via SQL
+    # This is the correct approach for Snowflake Streamlit
+    if CORTEX_SQL_AVAILABLE is None:  # Only check once
         try:
-            models = list_available_models()
-            if models and len(models) > 0:
-                return models
+            conn = st.connection("snowflake")
+            # Try to get models using SQL
+            models_df = conn.query(
+                """
+                SELECT model_name
+                FROM TABLE(INFORMATION_SCHEMA.CORTEX_AI_MODELS())
+                ORDER BY model_name
+                """
+            )
+            if not models_df.empty and 'MODEL_NAME' in models_df.columns:
+                CORTEX_SQL_AVAILABLE = True
+                return models_df['MODEL_NAME'].tolist(), 'sql'
+            else:
+                CORTEX_SQL_AVAILABLE = False
+        except Exception as e:
+            CORTEX_SQL_AVAILABLE = False
+    elif CORTEX_SQL_AVAILABLE:
+        # SQL worked before, try again
+        try:
+            conn = st.connection("snowflake")
+            models_df = conn.query(
+                """
+                SELECT model_name
+                FROM TABLE(INFORMATION_SCHEMA.CORTEX_AI_MODELS())
+                ORDER BY model_name
+                """
+            )
+            if not models_df.empty and 'MODEL_NAME' in models_df.columns:
+                return models_df['MODEL_NAME'].tolist(), 'sql'
         except Exception:
             pass
-    
-    # Fallback: Try querying Snowflake directly
-    # Note: In Snowflake Streamlit, the Python API should work
-    try:
-        conn = st.connection("snowflake")
-        models_df = conn.query(
-            """
-            SELECT model_name 
-            FROM TABLE(INFORMATION_SCHEMA.CORTEX_AI_MODELS())
-            ORDER BY model_name
-            """
-        )
-        if not models_df.empty and 'MODEL_NAME' in models_df.columns:
-            return models_df['MODEL_NAME'].tolist()
-    except Exception:
-        pass
-    
-    # Final fallback: Return a comprehensive list of known Snowflake Cortex models
-    # This ensures the dashboard works even if APIs are not available
-    return [
+
+    # Fallback: Return a comprehensive list of known Snowflake Cortex models
+    # This ensures the dashboard works even if SQL queries are not available
+    fallback_models = [
+        # Snowflake Arctic
+        "snowflake-arctic",
+
         # Mistral models
         "mistral-large",
-        "mistral-7b-instruct",
-        "mistral-8x7b-instruct",
-        "mixtral-8x7b-instruct",
-        
+        "mistral-large2",
+        "mistral-7b",
+        "mixtral-8x7b",
+
         # Llama models
-        "llama-3-3-70b-instruct",
-        "llama-3-1-8b-instruct",
-        "llama-3-2-1b-instruct",
-        "llama-3-2-3b-instruct",
-        
+        "llama3-8b",
+        "llama3-70b",
+        "llama3.1-8b",
+        "llama3.1-70b",
+        "llama3.1-405b",
+        "llama3.2-1b",
+        "llama3.2-3b",
+
         # Gemma models
-        "gemma-7b-it",
-        "gemma-2-2b-it",
-        "gemma-2-9b-it",
-        
-        # Other models
-        "reka-flash",
+        "gemma-7b",
+
+        # Reka models
         "reka-core",
-        "sonar-deep",
-        "sonar-deep-chat",
-        "sonar-deep-pro",
-        "sonar-deep-pro-chat",
-        
-        # Snowflake Arctic
-        "snowflake-arctic-instruct",
-        
-        # Claude models (if available)
+        "reka-flash",
+
+        # Claude models (if available in your account)
         "claude-3-5-sonnet",
-        "claude-3-opus",
         "claude-3-haiku",
+        "claude-3-sonnet",
     ]
+
+    return fallback_models, 'fallback'
 
 
 def estimate_tokens(text):
@@ -191,18 +204,46 @@ def estimate_tokens(text):
     return len(text) // 4
 
 def generate_ai_insights(llm_provider, user_prompt, account_context):
-    """Generate AI insights based on account data.
+    """Generate AI insights based on account data using Snowflake Cortex AI.
     Returns: (insights_text, input_tokens, output_tokens)
     """
-    # Try to use Snowflake's Cortex LLM if available
-    # Otherwise, fall back to a smart placeholder response
+    # Calculate input tokens (prompt + context)
+    full_prompt = f"{user_prompt}\n\nAccount Context:\n{account_context}"
+    input_tokens = estimate_tokens(full_prompt)
 
     try:
-        # Attempt to use Snowflake Cortex LLM
-        # Note: This requires Snowflake Cortex to be enabled
+        # Use Snowflake Cortex AI via SQL
         conn = st.connection("snowflake")
 
-        # Parse account context to extract key metrics
+        # Escape single quotes in the prompt for SQL
+        escaped_prompt = full_prompt.replace("'", "''")
+
+        # Call Snowflake Cortex Complete function
+        query = f"""
+        SELECT SNOWFLAKE.CORTEX.COMPLETE(
+            '{llm_provider}',
+            '{escaped_prompt}'
+        ) AS response
+        """
+
+        result = conn.query(query)
+
+        if not result.empty and 'RESPONSE' in result.columns:
+            insights = result['RESPONSE'].iloc[0]
+
+            # Calculate output tokens
+            output_tokens = estimate_tokens(insights)
+
+            return insights, input_tokens, output_tokens
+        else:
+            # No response from Cortex
+            raise Exception("No response from Cortex AI")
+
+    except Exception as e:
+        # Fallback to template-based response if Cortex call fails
+        error_msg = str(e)
+
+        # Parse account context for template
         context_lines = account_context.split('\n')
         avg_calls_line = [line for line in context_lines if 'Average Calls per Month' in line]
         growth_line = [line for line in context_lines if 'Growth Rate' in line]
@@ -210,80 +251,40 @@ def generate_ai_insights(llm_provider, user_prompt, account_context):
         avg_calls = avg_calls_line[0].split(':')[1].strip().split()[0] if avg_calls_line else "N/A"
         growth_rate_str = growth_line[0].split(':')[1].strip() if growth_line else "0.0%"
 
-        # Safely extract growth rate number
         try:
             growth_rate_num = float(growth_rate_str.replace('%', '').strip())
         except:
             growth_rate_num = 0.0
 
-        # Calculate input tokens (prompt + context)
-        input_text = f"{user_prompt}\n{account_context}"
-        input_tokens = estimate_tokens(input_text)
-
-        # For now, use a smart template-based response
-        # In production, replace this with actual LLM API calls
-
         insights = f"""
-**Analysis using {llm_provider}**
+**Analysis (Template Mode - Cortex AI unavailable)**
+
+⚠️ **Note:** Could not connect to Snowflake Cortex AI. Error: {error_msg}
 
 **User Question:** {user_prompt}
 
 **Account Summary:**
 {account_context}
 
-**Insights:**
+**Basic Analysis:**
 
-Based on the comprehensive analysis of this account's usage data, here are the key findings:
+Based on the available data:
 
 **Usage Pattern:**
-The account demonstrates consistent usage with an average of {avg_calls} calls per month. The growth trend shows {growth_rate_str}, indicating {'stable engagement' if growth_rate_num <= 5 else 'dynamic usage patterns'}.
-
-**Device Preference Analysis:**
-Looking at the device distribution, the account shows balanced usage across multiple device types, suggesting a flexible communication strategy.
+The account shows an average of {avg_calls} calls per month with a growth rate of {growth_rate_str}.
+This indicates {'stable usage' if abs(growth_rate_num) <= 5 else 'changing usage patterns'}.
 
 **Recommendations:**
-1. **Service Optimization**: Review the usage patterns to identify peak usage periods and optimize resource allocation
-2. **Engagement Strategy**: {'Maintain' if growth_rate_num >= 0 else 'Enhance'} current engagement levels through targeted communication
-3. **Risk Assessment**: Monitor usage trends for any signs of {'positive growth' if growth_rate_num > 0 else 'declining engagement'}
-
-**Next Steps:**
-- Schedule a quarterly review to track usage evolution
-- Consider upselling opportunities based on usage patterns
-- Implement proactive support measures
+1. Monitor usage trends for significant changes
+2. Review account health indicators regularly
+3. Consider engagement opportunities based on usage patterns
 
 ---
-*Powered by {llm_provider} AI Analysis*
+*Note: This is a template-based analysis. For AI-powered insights, ensure Snowflake Cortex AI is enabled and accessible.*
+*To enable Cortex, contact your Snowflake administrator or check: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-llms*
 """
 
-        # Calculate output tokens
         output_tokens = estimate_tokens(insights)
-
-        return insights, input_tokens, output_tokens
-
-    except Exception as e:
-        # Fallback to basic response if LLM not available
-        input_text = f"{user_prompt}\n{account_context}"
-        input_tokens = estimate_tokens(input_text)
-
-        insights = f"""
-**Analysis using {llm_provider}:**
-
-Based on the account data, here are key insights:
-
-**Account Overview:**
-{account_context}
-
-**Analysis:**
-The account data shows usage patterns that indicate {'healthy engagement' if True else 'monitoring needed'}.
-Key metrics suggest {'stable' if True else 'variable'} usage trends over the observation period.
-
-**Recommendation:** Continue monitoring usage patterns and consider proactive engagement strategies.
-
----
-*Note: Enhanced AI analysis requires LLM integration. Current mode: Template-based insights.*
-"""
-        output_tokens = estimate_tokens(insights)
-
         return insights, input_tokens, output_tokens
 
 
@@ -1231,34 +1232,51 @@ def show_account_lookup(account_df, usage_df, churn_df):
         st.markdown("### 🤖 AI Insights Assistant")
 
         # Model pricing information (approximate Snowflake Cortex pricing per 1M tokens)
+        # Based on Snowflake documentation
         model_pricing = {
+            # Snowflake Arctic
+            "snowflake-arctic": {"cost": 0.24, "per": "1M tokens"},
+
+            # Mistral models
             "mistral-large": {"cost": 5.60, "per": "1M tokens"},
-            "mistral-7b-instruct": {"cost": 0.12, "per": "1M tokens"},
-            "mistral-8x7b-instruct": {"cost": 0.24, "per": "1M tokens"},
-            "mixtral-8x7b-instruct": {"cost": 0.24, "per": "1M tokens"},
-            "llama-3-3-70b-instruct": {"cost": 2.00, "per": "1M tokens"},
-            "llama-3-1-8b-instruct": {"cost": 0.20, "per": "1M tokens"},
-            "llama-3-2-1b-instruct": {"cost": 0.10, "per": "1M tokens"},
-            "llama-3-2-3b-instruct": {"cost": 0.15, "per": "1M tokens"},
-            "gemma-7b-it": {"cost": 0.12, "per": "1M tokens"},
-            "gemma-2-2b-it": {"cost": 0.10, "per": "1M tokens"},
-            "gemma-2-9b-it": {"cost": 0.20, "per": "1M tokens"},
-            "reka-flash": {"cost": 0.15, "per": "1M tokens"},
+            "mistral-large2": {"cost": 5.60, "per": "1M tokens"},
+            "mistral-7b": {"cost": 0.12, "per": "1M tokens"},
+            "mixtral-8x7b": {"cost": 0.24, "per": "1M tokens"},
+
+            # Llama models
+            "llama3-8b": {"cost": 0.20, "per": "1M tokens"},
+            "llama3-70b": {"cost": 2.00, "per": "1M tokens"},
+            "llama3.1-8b": {"cost": 0.20, "per": "1M tokens"},
+            "llama3.1-70b": {"cost": 2.00, "per": "1M tokens"},
+            "llama3.1-405b": {"cost": 5.00, "per": "1M tokens"},
+            "llama3.2-1b": {"cost": 0.10, "per": "1M tokens"},
+            "llama3.2-3b": {"cost": 0.15, "per": "1M tokens"},
+
+            # Gemma models
+            "gemma-7b": {"cost": 0.12, "per": "1M tokens"},
+
+            # Reka models
             "reka-core": {"cost": 3.00, "per": "1M tokens"},
-            "sonar-deep": {"cost": 1.00, "per": "1M tokens"},
-            "sonar-deep-chat": {"cost": 1.00, "per": "1M tokens"},
-            "sonar-deep-pro": {"cost": 3.00, "per": "1M tokens"},
-            "sonar-deep-pro-chat": {"cost": 3.00, "per": "1M tokens"},
-            "snowflake-arctic-instruct": {"cost": 0.24, "per": "1M tokens"},
+            "reka-flash": {"cost": 0.15, "per": "1M tokens"},
+
+            # Claude models (if available)
             "claude-3-5-sonnet": {"cost": 3.00, "per": "1M tokens"},
-            "claude-3-opus": {"cost": 15.00, "per": "1M tokens"},
             "claude-3-haiku": {"cost": 0.25, "per": "1M tokens"},
+            "claude-3-sonnet": {"cost": 3.00, "per": "1M tokens"},
         }
 
-        # LLM Provider Selection - Use Snowflake Cortex to get available models
+        # LLM Provider Selection - Use Snowflake Cortex models
         col1, col2 = st.columns([2, 3])
         with col1:
-            available_models = get_available_llm_models()
+            # Get available models
+            available_models, model_source = get_available_llm_models()
+            models_displayed_count = len(available_models) if available_models else 0
+
+            # Simple status indicator
+            if model_source == 'sql':
+                st.success(f"✅ Connected to Cortex AI ({models_displayed_count} models available)")
+            else:
+                st.info(f"ℹ️ Using standard Cortex model list ({models_displayed_count} models available)")
 
             if len(available_models) > 0:
                 # Format model names with pricing if available
@@ -1274,7 +1292,7 @@ def show_account_lookup(account_df, usage_df, churn_df):
                     "Select AI Model",
                     options=model_options,
                     index=0,
-                    help="Choose the AI model from Snowflake Cortex. Pricing shown is estimated based on Snowflake documentation."
+                    help=f"Choose the AI model from Snowflake Cortex. {models_displayed_count} model(s) available. Pricing shown is estimated based on Snowflake documentation."
                 )
 
                 # Extract actual model name (remove pricing info)
@@ -1300,40 +1318,47 @@ def show_account_lookup(account_df, usage_df, churn_df):
         col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 0.5])
 
         with col1:
-            if st.button("📊 Account Status", use_container_width=True, key="btn_status"):
-                # Add to existing text with proper formatting
-                if st.session_state.prompt_text:
-                    st.session_state.prompt_text += "\n\n" + default_prompts["📊 Account Status"]
-                else:
-                    st.session_state.prompt_text = default_prompts["📊 Account Status"]
-                st.rerun()
+            btn_account = st.button("📊 Account Status", use_container_width=True, key="btn_account_status")
         with col2:
-            if st.button("📈 Trend Analysis", use_container_width=True, key="btn_trend"):
-                if st.session_state.prompt_text:
-                    st.session_state.prompt_text += "\n\n" + default_prompts["📈 Trend Analysis"]
-                else:
-                    st.session_state.prompt_text = default_prompts["📈 Trend Analysis"]
-                st.rerun()
+            btn_trend = st.button("📈 Trend Analysis", use_container_width=True, key="btn_trend_analysis")
         with col3:
-            if st.button("🔮 Future Performance", use_container_width=True, key="btn_future"):
-                if st.session_state.prompt_text:
-                    st.session_state.prompt_text += "\n\n" + default_prompts["🔮 Future Performance"]
-                else:
-                    st.session_state.prompt_text = default_prompts["🔮 Future Performance"]
-                st.rerun()
+            btn_future = st.button("🔮 Future Performance", use_container_width=True, key="btn_future_performance")
         with col4:
-            if st.button("⚡ Next Actions", use_container_width=True, key="btn_actions"):
-                if st.session_state.prompt_text:
-                    st.session_state.prompt_text += "\n\n" + default_prompts["⚡ Next Actions"]
-                else:
-                    st.session_state.prompt_text = default_prompts["⚡ Next Actions"]
-                st.rerun()
+            btn_next = st.button("⚡ Next Actions", use_container_width=True, key="btn_next_actions")
         with col5:
-            if st.button("🗑️ Clear", use_container_width=True, help="Clear all prompts", key="btn_clear"):
-                st.session_state.prompt_text = ""
-                st.rerun()
+            btn_clear = st.button("🗑️ Clear", use_container_width=True, help="Clear all prompts", key="btn_clear")
+        
+        # Handle button clicks after all buttons are defined
+        if btn_account:
+            if st.session_state.prompt_text:
+                st.session_state.prompt_text += "\n\n" + default_prompts["📊 Account Status"]
+            else:
+                st.session_state.prompt_text = default_prompts["📊 Account Status"]
+            st.rerun()
+        if btn_trend:
+            if st.session_state.prompt_text:
+                st.session_state.prompt_text += "\n\n" + default_prompts["📈 Trend Analysis"]
+            else:
+                st.session_state.prompt_text = default_prompts["📈 Trend Analysis"]
+            st.rerun()
+        if btn_future:
+            if st.session_state.prompt_text:
+                st.session_state.prompt_text += "\n\n" + default_prompts["🔮 Future Performance"]
+            else:
+                st.session_state.prompt_text = default_prompts["🔮 Future Performance"]
+            st.rerun()
+        if btn_next:
+            if st.session_state.prompt_text:
+                st.session_state.prompt_text += "\n\n" + default_prompts["⚡ Next Actions"]
+            else:
+                st.session_state.prompt_text = default_prompts["⚡ Next Actions"]
+            st.rerun()
+        if btn_clear:
+            st.session_state.prompt_text = ""
+            st.rerun()
 
         # User prompt input using session state
+        # Remove key so the value prop updates properly when buttons are clicked
         user_prompt = st.text_area(
             "Ask about this account's usage patterns and trends",
             value=st.session_state.prompt_text,
