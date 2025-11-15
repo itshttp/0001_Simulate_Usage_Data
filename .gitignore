@@ -14,6 +14,7 @@ ENV/
 # Credentials and Config (keep secrets out of version control)
 *.env
 .env
+.streamlit/secrets.toml
 
 # Data files (generated data - don't track in version control)
 *.csv
