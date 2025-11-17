@@ -1202,7 +1202,10 @@ def show_account_lookup(account_df, usage_df, churn_df):
         # Check if account has churned
         if not churn_df.empty and selected_account in churn_df['USERID'].values:
             churn_info = churn_df[churn_df['USERID'] == selected_account].iloc[0]
-            st.warning(f"⚠️ This account churned on {churn_info['CHURN_DATE'].strftime('%Y-%m-%d')}")
+            if pd.notna(churn_info['CHURN_DATE']):
+                st.warning(f"⚠️ This account churned on {churn_info['CHURN_DATE'].strftime('%Y-%m-%d')}")
+            else:
+                st.warning("⚠️ This account has churned (date unavailable)")
         
         st.markdown("---")
         
