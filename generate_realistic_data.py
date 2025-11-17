@@ -392,13 +392,14 @@ def generate_account_attributes(accounts):
 
 
 def generate_churn_records(accounts):
-    """Generate churn records."""
+    """Generate churn records (ONLY for churned accounts)."""
     print(f"\nGenerating churn records...")
 
     churn_records = []
     churned_count = 0
 
     for account in accounts:
+        # ONLY add accounts that actually churned
         if account['churned']:
             churned_count += 1
             churn_records.append({
@@ -406,14 +407,10 @@ def generate_churn_records(accounts):
                 'CHURN_DATE': account['churn_month'].strftime('%Y-%m-01'),
                 'CHURNED': 1
             })
-        else:
-            churn_records.append({
-                'USERID': account['account_id'],
-                'CHURN_DATE': None,
-                'CHURNED': 0
-            })
+        # Do NOT add active accounts to CHURN_RECORDS table
 
     print(f"✓ Generated {len(churn_records):,} churn records ({churned_count:,} churned accounts)")
+    print(f"  Active accounts (not in churn records): {len(accounts) - churned_count:,}")
     return churn_records
 
 
