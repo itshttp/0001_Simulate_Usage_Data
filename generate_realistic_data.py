@@ -164,20 +164,34 @@ def generate_usage_pattern(num_users, months_data, churn_month=None, onboard_mon
         else:  # stable
             trend_factor = 1 + random.uniform(-0.05, 0.05)  # Small random variation
 
-        # Pre-churn decline
-        if months_to_churn is not None and months_to_churn <= 3:
-            # Sharp decline in last 3 months before churn
-            decline_factor = 0.5 - (3 - months_to_churn) * 0.15
-        elif months_to_churn is not None and months_to_churn <= 6:
-            # Gradual decline 6-3 months before churn
-            decline_factor = 0.85 - (6 - months_to_churn) * 0.05
+        # Pre-churn decline - MORE REALISTIC with variation
+        # Not all churned accounts show clear decline patterns
+        if months_to_churn is not None:
+            # 30% of churned accounts don't show obvious decline (harder to predict)
+            if random.random() < 0.30:
+                decline_factor = random.uniform(0.90, 1.05)  # No clear signal
+            elif months_to_churn <= 3:
+                # More gradual decline in last 3 months (was 0.5, now 0.75-0.85)
+                base_decline = random.uniform(0.75, 0.85)
+                additional_decline = (3 - months_to_churn) * random.uniform(0.03, 0.07)
+                decline_factor = max(0.65, base_decline - additional_decline)
+            elif months_to_churn <= 6:
+                # Very gradual decline 6-3 months before churn
+                base_decline = random.uniform(0.88, 0.95)
+                additional_decline = (6 - months_to_churn) * random.uniform(0.01, 0.03)
+                decline_factor = base_decline - additional_decline
+            else:
+                decline_factor = random.uniform(0.95, 1.05)  # Normal variation
         else:
-            decline_factor = 1.0
+            decline_factor = random.uniform(0.95, 1.05)  # Add noise to active accounts too
 
-        # Calculate final usage
+        # Calculate final usage with MORE NOISE for realism
         total_factor = seasonal_factor * trend_factor * decline_factor
-        total_calls = max(0, int(num_users * base_calls_per_user * total_factor * random.uniform(0.8, 1.2)))
-        total_minutes = max(0, int(num_users * base_minutes_per_user * total_factor * random.uniform(0.8, 1.2)))
+        # Increased noise from 0.8-1.2 to 0.6-1.4 for more realistic variation
+        noise_factor_calls = random.uniform(0.6, 1.4)
+        noise_factor_minutes = random.uniform(0.6, 1.4)
+        total_calls = max(0, int(num_users * base_calls_per_user * total_factor * noise_factor_calls))
+        total_minutes = max(0, int(num_users * base_minutes_per_user * total_factor * noise_factor_minutes))
 
         # Voice calls (80-95% of total)
         voice_ratio = random.uniform(0.80, 0.95)
