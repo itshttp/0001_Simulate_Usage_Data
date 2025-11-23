@@ -73,6 +73,145 @@ def load_churn_data():
     return df
 
 
+@st.cache_data(ttl=60)  # Cache for 1 minute
+def load_users_and_roles():
+    """Load users and their roles from Snowflake."""
+    try:
+        conn = st.connection("snowflake")
+
+        # Get all users from INFORMATION_SCHEMA
+        users_query = """
+        SELECT
+            NAME,
+            CREATED_ON,
+            LOGIN_NAME,
+            DISPLAY_NAME,
+            DISABLED,
+            DEFAULT_ROLE,
+            DEFAULT_WAREHOUSE,
+            HAS_PASSWORD,
+            COMMENT
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+        WHERE DELETED_ON IS NULL
+        ORDER BY NAME
+        """
+        users_df = conn.query(users_query)
+
+        return users_df
+    except Exception as e:
+        st.error(f"Error loading users: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
+def load_roles():
+    """Load all roles from Snowflake."""
+    try:
+        conn = st.connection("snowflake")
+
+        # Get all roles from ACCOUNT_USAGE
+        roles_query = """
+        SELECT
+            NAME,
+            CREATED_ON,
+            DELETED_ON,
+            COMMENT,
+            OWNER
+        FROM SNOWFLAKE.ACCOUNT_USAGE.ROLES
+        WHERE DELETED_ON IS NULL
+        ORDER BY NAME
+        """
+        roles_df = conn.query(roles_query)
+
+        return roles_df
+    except Exception as e:
+        st.error(f"Error loading roles: {e}")
+        return pd.DataFrame()
+
+
+def get_grants_for_user(username):
+    """Get all grants for a specific user."""
+    try:
+        conn = st.connection("snowflake")
+
+        # Get grants to user from ACCOUNT_USAGE
+        grants_query = f"""
+        SELECT
+            CREATED_ON,
+            ROLE,
+            GRANTEE_NAME,
+            GRANTED_BY,
+            DELETED_ON
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+        WHERE GRANTEE_NAME = '{username}'
+        AND DELETED_ON IS NULL
+        ORDER BY CREATED_ON DESC
+        """
+        grants_df = conn.query(grants_query)
+
+        return grants_df
+    except Exception as e:
+        st.error(f"Error loading grants for user {username}: {e}")
+        return pd.DataFrame()
+
+
+def get_grants_for_role(role_name):
+    """Get all grants for a specific role."""
+    try:
+        conn = st.connection("snowflake")
+
+        # Get grants to role from ACCOUNT_USAGE
+        grants_query = f"""
+        SELECT
+            CREATED_ON,
+            PRIVILEGE,
+            GRANTED_ON,
+            NAME,
+            TABLE_CATALOG,
+            TABLE_SCHEMA,
+            GRANTED_TO,
+            GRANTEE_NAME,
+            GRANT_OPTION,
+            GRANTED_BY
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES
+        WHERE GRANTEE_NAME = '{role_name}'
+        AND DELETED_ON IS NULL
+        ORDER BY CREATED_ON DESC
+        """
+        grants_df = conn.query(grants_query)
+
+        return grants_df
+    except Exception as e:
+        st.error(f"Error loading grants for role {role_name}: {e}")
+        return pd.DataFrame()
+
+
+def get_users_with_role(role_name):
+    """Get all users with a specific role."""
+    try:
+        conn = st.connection("snowflake")
+
+        # Get grants of role to users from ACCOUNT_USAGE
+        grants_query = f"""
+        SELECT
+            CREATED_ON,
+            ROLE,
+            GRANTEE_NAME,
+            GRANTED_TO,
+            GRANTED_BY
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+        WHERE ROLE = '{role_name}'
+        AND DELETED_ON IS NULL
+        ORDER BY GRANTEE_NAME
+        """
+        grants_df = conn.query(grants_query)
+
+        return grants_df
+    except Exception as e:
+        st.error(f"Error loading users with role {role_name}: {e}")
+        return pd.DataFrame()
+
+
 def prepare_account_context(selected_account, latest_account, usage_data_sorted, avg_calls, avg_minutes):
     """Prepare account context summary for AI analysis."""
     # Calculate trends
@@ -299,7 +438,8 @@ def main():
     page = st.sidebar.radio(
         "Navigation",
         ["🏠 Overview", "👥 Account Analytics", "📈 Usage Trends",
-         "⚠️ Churn Analysis", "🎯 User Segmentation", "📅 Vintage Analysis", "🔍 Account Lookup"]
+         "⚠️ Churn Analysis", "🎯 User Segmentation", "📅 Vintage Analysis",
+         "🔍 Account Lookup", "🔐 Access & Roles"]
     )
 
     # Load data
@@ -368,6 +508,8 @@ def main():
         show_vintage_analysis(account_df, churn_df)
     elif page == "🔍 Account Lookup":
         show_account_lookup(account_df, usage_df, churn_df)
+    elif page == "🔐 Access & Roles":
+        show_access_roles_dashboard()
 
 
 def show_overview(account_df, usage_df, churn_df):
@@ -1536,6 +1678,349 @@ def show_account_lookup(account_df, usage_df, churn_df):
             file_name=f"account_{selected_account}_usage_data.csv",
             mime="text/csv"
         )
+
+
+def show_access_roles_dashboard():
+    """Access and Roles Management Dashboard."""
+    st.title("🔐 Access & Roles Dashboard")
+    st.markdown("Monitor and manage user access, roles, and permissions across your Snowflake account.")
+
+    # Create tabs for different views
+    tab1, tab2, tab3, tab4 = st.tabs(["👥 Users", "🎭 Roles", "🔍 User Details", "📊 Role Details"])
+
+    # Tab 1: Users Overview
+    with tab1:
+        st.header("Users Overview")
+
+        with st.spinner("Loading users..."):
+            users_df = load_users_and_roles()
+
+        if not users_df.empty:
+            # Display key metrics
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                total_users = len(users_df)
+                st.metric("Total Users", f"{total_users:,}")
+
+            with col2:
+                # Count users by has_password (if column exists)
+                if 'HAS_PASSWORD' in users_df.columns:
+                    password_users = users_df[users_df['HAS_PASSWORD'] == 'true'].shape[0]
+                    st.metric("Password Auth", f"{password_users:,}")
+                else:
+                    st.metric("N/A", "-")
+
+            with col3:
+                # Count disabled users
+                if 'DISABLED' in users_df.columns:
+                    disabled_users = users_df[users_df['DISABLED'] == 'true'].shape[0]
+                    st.metric("Disabled Users", f"{disabled_users:,}")
+                else:
+                    st.metric("N/A", "-")
+
+            with col4:
+                # Count users with default role
+                if 'DEFAULT_ROLE' in users_df.columns:
+                    users_with_role = users_df[users_df['DEFAULT_ROLE'].notna()].shape[0]
+                    st.metric("With Default Role", f"{users_with_role:,}")
+                else:
+                    st.metric("N/A", "-")
+
+            st.markdown("---")
+
+            # Search and filter
+            search_term = st.text_input("🔍 Search Users", placeholder="Enter username...")
+
+            # Filter users based on search
+            if search_term:
+                if 'NAME' in users_df.columns:
+                    filtered_users = users_df[users_df['NAME'].str.contains(search_term, case=False, na=False)]
+                else:
+                    filtered_users = users_df
+            else:
+                filtered_users = users_df
+
+            # Display users table
+            st.subheader(f"Users ({len(filtered_users)} shown)")
+
+            # Select columns to display
+            display_columns = []
+            if 'NAME' in filtered_users.columns:
+                display_columns.append('NAME')
+            if 'CREATED_ON' in filtered_users.columns:
+                display_columns.append('CREATED_ON')
+            if 'LOGIN_NAME' in filtered_users.columns:
+                display_columns.append('LOGIN_NAME')
+            if 'DISPLAY_NAME' in filtered_users.columns:
+                display_columns.append('DISPLAY_NAME')
+            if 'DEFAULT_ROLE' in filtered_users.columns:
+                display_columns.append('DEFAULT_ROLE')
+            if 'DEFAULT_WAREHOUSE' in filtered_users.columns:
+                display_columns.append('DEFAULT_WAREHOUSE')
+            if 'DISABLED' in filtered_users.columns:
+                display_columns.append('DISABLED')
+
+            if display_columns:
+                st.dataframe(
+                    filtered_users[display_columns],
+                    use_container_width=True,
+                    height=400
+                )
+            else:
+                st.dataframe(filtered_users, use_container_width=True, height=400)
+
+            # Download button
+            csv = filtered_users.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Users Data",
+                data=csv,
+                file_name="snowflake_users.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No users found or insufficient permissions to view users.")
+
+    # Tab 2: Roles Overview
+    with tab2:
+        st.header("Roles Overview")
+
+        with st.spinner("Loading roles..."):
+            roles_df = load_roles()
+
+        if not roles_df.empty:
+            # Display key metrics
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                total_roles = len(roles_df)
+                st.metric("Total Roles", f"{total_roles:,}")
+
+            with col2:
+                # Count custom roles (excluding system roles)
+                if 'NAME' in roles_df.columns:
+                    system_roles = ['ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN', 'PUBLIC']
+                    custom_roles = roles_df[~roles_df['NAME'].isin(system_roles)].shape[0]
+                    st.metric("Custom Roles", f"{custom_roles:,}")
+                else:
+                    st.metric("N/A", "-")
+
+            with col3:
+                # Count system roles
+                if 'NAME' in roles_df.columns:
+                    system_roles_count = roles_df[roles_df['NAME'].isin(system_roles)].shape[0]
+                    st.metric("System Roles", f"{system_roles_count:,}")
+                else:
+                    st.metric("N/A", "-")
+
+            st.markdown("---")
+
+            # Search roles
+            search_role = st.text_input("🔍 Search Roles", placeholder="Enter role name...")
+
+            # Filter roles based on search
+            if search_role:
+                if 'NAME' in roles_df.columns:
+                    filtered_roles = roles_df[roles_df['NAME'].str.contains(search_role, case=False, na=False)]
+                else:
+                    filtered_roles = roles_df
+            else:
+                filtered_roles = roles_df
+
+            # Display roles table
+            st.subheader(f"Roles ({len(filtered_roles)} shown)")
+
+            # Select columns to display
+            display_columns = []
+            if 'CREATED_ON' in filtered_roles.columns:
+                display_columns.append('CREATED_ON')
+            if 'NAME' in filtered_roles.columns:
+                display_columns.append('NAME')
+            if 'COMMENT' in filtered_roles.columns:
+                display_columns.append('COMMENT')
+            if 'OWNER' in filtered_roles.columns:
+                display_columns.append('OWNER')
+
+            if display_columns:
+                st.dataframe(
+                    filtered_roles[display_columns],
+                    use_container_width=True,
+                    height=400
+                )
+            else:
+                st.dataframe(filtered_roles, use_container_width=True, height=400)
+
+            # Download button
+            csv = filtered_roles.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Roles Data",
+                data=csv,
+                file_name="snowflake_roles.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No roles found or insufficient permissions to view roles.")
+
+    # Tab 3: User Details
+    with tab3:
+        st.header("User Access Details")
+        st.markdown("View detailed access information for a specific user.")
+
+        if not users_df.empty and 'NAME' in users_df.columns:
+            # User selection
+            selected_user = st.selectbox(
+                "Select User",
+                options=sorted(users_df['NAME'].tolist()),
+                key="user_detail_select"
+            )
+
+            if selected_user:
+                st.subheader(f"Access Details for: {selected_user}")
+
+                # User information
+                user_info = users_df[users_df['NAME'] == selected_user].iloc[0]
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**User Information**")
+                    if 'LOGIN_NAME' in user_info:
+                        st.text(f"Login Name: {user_info.get('LOGIN_NAME', 'N/A')}")
+                    if 'DISPLAY_NAME' in user_info:
+                        st.text(f"Display Name: {user_info.get('DISPLAY_NAME', 'N/A')}")
+                    if 'DEFAULT_ROLE' in user_info:
+                        st.text(f"Default Role: {user_info.get('DEFAULT_ROLE', 'N/A')}")
+                    if 'DEFAULT_WAREHOUSE' in user_info:
+                        st.text(f"Default Warehouse: {user_info.get('DEFAULT_WAREHOUSE', 'N/A')}")
+
+                with col2:
+                    st.markdown("**Account Status**")
+                    if 'DISABLED' in user_info:
+                        st.text(f"Disabled: {user_info.get('DISABLED', 'N/A')}")
+                    if 'CREATED_ON' in user_info:
+                        st.text(f"Created On: {user_info.get('CREATED_ON', 'N/A')}")
+                    if 'HAS_PASSWORD' in user_info:
+                        st.text(f"Has Password: {user_info.get('HAS_PASSWORD', 'N/A')}")
+
+                st.markdown("---")
+
+                # Get grants for this user
+                with st.spinner(f"Loading grants for {selected_user}..."):
+                    user_grants = get_grants_for_user(selected_user)
+
+                if not user_grants.empty:
+                    st.subheader("Roles Granted to User")
+                    st.dataframe(user_grants, use_container_width=True, height=300)
+
+                    # Download button
+                    csv = user_grants.to_csv(index=False)
+                    st.download_button(
+                        label=f"📥 Download {selected_user}'s Grants",
+                        data=csv,
+                        file_name=f"grants_{selected_user}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.info(f"No grants found for user {selected_user}.")
+        else:
+            st.warning("No users available for detailed view.")
+
+    # Tab 4: Role Details
+    with tab4:
+        st.header("Role Permissions Details")
+        st.markdown("View detailed permissions and users assigned to a specific role.")
+
+        if not roles_df.empty and 'NAME' in roles_df.columns:
+            # Role selection
+            selected_role = st.selectbox(
+                "Select Role",
+                options=sorted(roles_df['NAME'].tolist()),
+                key="role_detail_select"
+            )
+
+            if selected_role:
+                st.subheader(f"Details for Role: {selected_role}")
+
+                # Role information
+                role_info = roles_df[roles_df['NAME'] == selected_role].iloc[0]
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**Role Information**")
+                    if 'CREATED_ON' in role_info:
+                        st.text(f"Created On: {role_info.get('CREATED_ON', 'N/A')}")
+                    if 'OWNER' in role_info:
+                        st.text(f"Owner: {role_info.get('OWNER', 'N/A')}")
+
+                with col2:
+                    st.markdown("**Description**")
+                    if 'COMMENT' in role_info:
+                        comment = role_info.get('COMMENT', 'No description available')
+                        st.text(comment if comment else 'No description available')
+
+                st.markdown("---")
+
+                # Create sub-tabs for grants and users
+                subtab1, subtab2 = st.tabs(["📋 Permissions", "👥 Users with Role"])
+
+                with subtab1:
+                    # Get grants for this role
+                    with st.spinner(f"Loading permissions for {selected_role}..."):
+                        role_grants = get_grants_for_role(selected_role)
+
+                    if not role_grants.empty:
+                        st.subheader("Permissions Granted to Role")
+
+                        # Add filters for grant type
+                        if 'PRIVILEGE' in role_grants.columns:
+                            privilege_filter = st.multiselect(
+                                "Filter by Privilege Type",
+                                options=sorted(role_grants['PRIVILEGE'].unique().tolist()),
+                                default=[]
+                            )
+
+                            if privilege_filter:
+                                filtered_grants = role_grants[role_grants['PRIVILEGE'].isin(privilege_filter)]
+                            else:
+                                filtered_grants = role_grants
+
+                            st.dataframe(filtered_grants, use_container_width=True, height=400)
+
+                            # Download button
+                            csv = filtered_grants.to_csv(index=False)
+                            st.download_button(
+                                label=f"📥 Download {selected_role}'s Permissions",
+                                data=csv,
+                                file_name=f"permissions_{selected_role}.csv",
+                                mime="text/csv"
+                            )
+                        else:
+                            st.dataframe(role_grants, use_container_width=True, height=400)
+                    else:
+                        st.info(f"No grants found for role {selected_role}.")
+
+                with subtab2:
+                    # Get users with this role
+                    with st.spinner(f"Loading users with {selected_role}..."):
+                        users_with_role = get_users_with_role(selected_role)
+
+                    if not users_with_role.empty:
+                        st.subheader(f"Users Granted {selected_role}")
+                        st.dataframe(users_with_role, use_container_width=True, height=400)
+
+                        # Download button
+                        csv = users_with_role.to_csv(index=False)
+                        st.download_button(
+                            label=f"📥 Download Users with {selected_role}",
+                            data=csv,
+                            file_name=f"users_with_{selected_role}.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.info(f"No users found with role {selected_role}.")
+        else:
+            st.warning("No roles available for detailed view.")
 
 
 if __name__ == "__main__":
