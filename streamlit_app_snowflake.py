@@ -46,28 +46,101 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased for stable data)
 def load_account_data():
-    """Load account data from Snowflake."""
-    query = "SELECT * FROM ACCOUNT_ATTRIBUTES_MONTHLY"
+    """
+    Load account data from Snowflake.
+    EFFICIENCY: Select only needed columns instead of SELECT *
+    """
+    query = """
+    SELECT 
+        MONTH,
+        ENTERPRISE_ACCOUNT_ID,
+        SERVICE_ACCOUNT_ID,
+        COMPANY,
+        EA_BRAND_ID,
+        EA_BRAND_NAME,
+        EA_UBRAND_ID,
+        EA_UBRAND_DESCRIPTION,
+        EA_ACCT_STATUS,
+        SA_BRAND_ID,
+        SA_BRAND_NAME,
+        SA_UBRAND_ID,
+        SA_UBRAND_DESCRIPTION,
+        SA_ACCT_STATUS,
+        PACKAGE_ID,
+        PACKAGE_NAME,
+        CATALOG_PACKAGE_ID,
+        CATALOG_PACKAGE_NAME,
+        IS_TESTER,
+        TIER_ID,
+        TIER_NAME,
+        EDITION_NAME,
+        EXTERNAL_ACCOUNT_ID,
+        BAN,
+        OPCO_ID
+    FROM ACCOUNT_ATTRIBUTES_MONTHLY
+    """
     df = st.connection("snowflake").query(query)
     df['MONTH'] = pd.to_datetime(df['MONTH'])
     return df
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased for stable data)
 def load_usage_data():
-    """Load usage data from Snowflake."""
-    query = "SELECT * FROM PHONE_USAGE_DATA"
+    """
+    Load usage data from Snowflake.
+    EFFICIENCY: Select only needed columns instead of SELECT *
+    """
+    query = """
+    SELECT 
+        USERID,
+        MONTH,
+        PHONE_TOTAL_CALLS,
+        PHONE_TOTAL_MINUTES_OF_USE,
+        VOICE_CALLS,
+        VOICE_MINS,
+        FAX_CALLS,
+        FAX_MINS,
+        PHONE_TOTAL_NUM_INBOUND_CALLS,
+        PHONE_TOTAL_NUM_OUTBOUND_CALLS,
+        PHONE_TOTAL_INBOUND_MIN,
+        PHONE_TOTAL_OUTBOUND_MIN,
+        OUT_VOICE_CALLS,
+        IN_VOICE_CALLS,
+        OUT_VOICE_MINS,
+        IN_VOICE_MINS,
+        OUT_FAX_CALLS,
+        IN_FAX_CALLS,
+        OUT_FAX_MINS,
+        IN_FAX_MINS,
+        PHONE_MAU,
+        CALL_MAU,
+        FAX_MAU,
+        HARDPHONE_CALLS,
+        SOFTPHONE_CALLS,
+        MOBILE_CALLS,
+        MOBILE_ANDROID_CALLS
+    FROM PHONE_USAGE_DATA
+    """
     df = st.connection("snowflake").query(query)
     df['MONTH'] = pd.to_datetime(df['MONTH'])
     return df
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased for stable data)
 def load_churn_data():
-    """Load churn data from Snowflake."""
-    query = "SELECT * FROM CHURN_RECORDS"
+    """
+    Load churn data from Snowflake.
+    EFFICIENCY: CHURN_RECORDS is small, but explicit column selection is still best practice
+    """
+    query = """
+    SELECT 
+        USERID,
+        CHURN_DATE,
+        CHURNED
+    FROM CHURN_RECORDS
+    """
     df = st.connection("snowflake").query(query)
     df['CHURN_DATE'] = pd.to_datetime(df['CHURN_DATE'])
     return df
