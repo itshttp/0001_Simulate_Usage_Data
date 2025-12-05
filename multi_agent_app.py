@@ -38,16 +38,16 @@ def main():
         st.subheader("1️⃣ Data Collection Agent")
         collector_prompt = st.text_area(
             "Data Query Requirement",
-            "SELECT * FROM CUSTOMERS LIMIT 1000",
+            "Show all available tables in the current database",
             height=100,
-            help="Describe what data you need, Agent will generate SQL"
+            help="First run: 'Show all available tables' to see what data you have. Then use actual table names."
         )
-        
+
         # Optional: Provide available table list
         with st.expander("Advanced: Specify Available Tables"):
             available_tables = st.text_input(
                 "Available tables (comma-separated)",
-                "CUSTOMERS,ORDERS,TRANSACTIONS"
+                "Leave empty to auto-discover tables"
             )
         
         st.divider()
@@ -65,7 +65,7 @@ def main():
         st.subheader("3️⃣ Business Analyst Agent")
         analyst_prompt = st.text_area(
             "Analysis Focus",
-            "Identify main causes of customer churn",
+            "Analyze usage patterns and identify key trends",
             height=80
         )
         
