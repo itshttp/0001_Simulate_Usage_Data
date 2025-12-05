@@ -223,7 +223,7 @@ def main():
                 st.text(f"⏱️ {time.strftime('%H:%M:%S', time.localtime(log['timestamp']))} - {log['message']}")
 
 # ============================================
-# 8. RUN APPLICATION
+# RUN APPLICATION
 # ============================================
-if __name__ == "__main__":
-    main()
+# Call main() directly for Snowflake Streamlit
+main()
