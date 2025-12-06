@@ -11,14 +11,15 @@ from .base import BaseAgent
 class BusinessAnalystAgent(BaseAgent):
     """Agent responsible for business analysis and generating actionable insights."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, model: str = "mistral-large2"):
         """
         Initialize Business Analyst Agent.
 
         Args:
             session: Snowflake Snowpark session
+            model: LLM model to use (default: mistral-large2)
         """
-        super().__init__(session, "BusinessAnalyst")
+        super().__init__(session, "BusinessAnalyst", model=model)
         self.system_prompt = """You are a senior business analyst specializing in telecommunications and customer analytics.
 
 Your tasks:

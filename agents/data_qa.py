@@ -11,14 +11,15 @@ from .base import BaseAgent
 class DataQAAgent(BaseAgent):
     """Agent responsible for data quality analysis and validation."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, model: str = "mistral-large2"):
         """
         Initialize Data QA Agent.
 
         Args:
             session: Snowflake Snowpark session
+            model: LLM model to use (default: mistral-large2)
         """
-        super().__init__(session, "DataQA")
+        super().__init__(session, "DataQA", model=model)
         self.standard_checks = [
             "missing_values",
             "data_types",

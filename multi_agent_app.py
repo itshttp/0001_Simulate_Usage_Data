@@ -33,14 +33,42 @@ def main():
     
     # Sidebar configuration
     with st.sidebar:
+        st.header("⚙️ System Configuration")
+
+        # LLM Selection
+        st.subheader("🤖 LLM Model Selection")
+        llm_model = st.selectbox(
+            "Select LLM Model",
+            options=[
+                "mistral-large2",
+                "snowflake-arctic",
+                "llama3.1-70b",
+                "llama3.1-405b",
+                "reka-flash",
+                "mixtral-8x7b",
+                "gemma-7b"
+            ],
+            index=0,
+            help="Choose which LLM model to use for all agents"
+        )
+
+        st.divider()
         st.header("⚙️ Agent Configuration")
-        
+
         st.subheader("1️⃣ Data Collection Agent")
         collector_prompt = st.text_area(
             "Data Query Requirement",
             "Show all available tables in the current database",
             height=100,
             help="First run: 'Show all available tables' to see what data you have. Then use actual table names."
+        )
+
+        # Metadata/Context for better SQL generation
+        metadata_context = st.text_area(
+            "📋 Database Schema Context (Optional)",
+            placeholder="Example:\n- USAGE_DATA table contains: user_id, timestamp, action, device_type\n- CUSTOMERS table contains: customer_id, name, signup_date, plan_type\n- Tables are related by user_id = customer_id",
+            height=120,
+            help="Provide information about your tables, columns, and relationships to help generate better SQL queries"
         )
 
         # Optional: Provide available table list
@@ -93,17 +121,18 @@ def main():
             progress_bar.progress(value)
             status_text.text(text)
         
-        # Initialize orchestrator
-        orchestrator = AgentOrchestrator(session)
-        
+        # Initialize orchestrator with selected LLM model
+        orchestrator = AgentOrchestrator(session, llm_model=llm_model)
+
         # Prepare prompts
         user_prompts = {
             "collector": collector_prompt,
             "qa": qa_prompt,
-            "analyst": analyst_prompt
+            "analyst": analyst_prompt,
+            "metadata_context": metadata_context if metadata_context else ""
         }
-        
-        if available_tables:
+
+        if available_tables and available_tables != "Leave empty to auto-discover tables":
             user_prompts["available_tables"] = [t.strip() for t in available_tables.split(',')]
         
         # Execute pipeline

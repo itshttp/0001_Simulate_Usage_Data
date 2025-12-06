@@ -11,14 +11,15 @@ from .base import BaseAgent
 class ComplianceAgent(BaseAgent):
     """Agent responsible for compliance and PII detection."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, model: str = "mistral-large2"):
         """
         Initialize Compliance Agent.
 
         Args:
             session: Snowflake Snowpark session
+            model: LLM model to use (default: mistral-large2)
         """
-        super().__init__(session, "Compliance")
+        super().__init__(session, "Compliance", model=model)
         self.pii_patterns = {
             'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
             'phone': r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',

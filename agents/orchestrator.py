@@ -14,19 +14,21 @@ from .compliance import ComplianceAgent
 class AgentOrchestrator:
     """Orchestrates the execution of multiple agents in sequence."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, llm_model: str = "mistral-large2"):
         """
         Initialize orchestrator with all agents.
 
         Args:
             session: Snowflake Snowpark session
+            llm_model: LLM model to use for all agents (default: mistral-large2)
         """
         self.session = session
+        self.llm_model = llm_model
         self.agents = {
-            "collector": DataCollectorAgent(session),
-            "qa": DataQAAgent(session),
-            "analyst": BusinessAnalystAgent(session),
-            "compliance": ComplianceAgent(session)
+            "collector": DataCollectorAgent(session, model=llm_model),
+            "qa": DataQAAgent(session, model=llm_model),
+            "analyst": BusinessAnalystAgent(session, model=llm_model),
+            "compliance": ComplianceAgent(session, model=llm_model)
         }
         self.context = {}
         self.execution_log = []

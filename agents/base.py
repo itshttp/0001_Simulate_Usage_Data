@@ -9,17 +9,18 @@ from snowflake.snowpark import Session
 class BaseAgent:
     """Base class for all agents in the multi-agent system."""
 
-    def __init__(self, session: Session, agent_name: str):
+    def __init__(self, session: Session, agent_name: str, model: str = "mistral-large2"):
         """
         Initialize base agent.
 
         Args:
             session: Snowflake Snowpark session
             agent_name: Name identifier for this agent
+            model: LLM model to use (default: mistral-large2)
         """
         self.session = session
         self.agent_name = agent_name
-        self.model = "mistral-large2"  # Can change to llama3.1-70b or others
+        self.model = model
 
     def call_llm(self, system_prompt: str, user_message: str) -> str:
         """
