@@ -93,9 +93,11 @@ def load_usage_data():
     EFFICIENCY: Select only needed columns instead of SELECT *
     """
     query = """
-    SELECT 
+    SELECT
         USERID,
         MONTH,
+        PACKAGE_TIER,
+        MRR,
         PHONE_TOTAL_CALLS,
         PHONE_TOTAL_MINUTES_OF_USE,
         VOICE_CALLS,
@@ -290,35 +292,85 @@ def prepare_account_context(selected_account, latest_account, usage_data_sorted,
     # Calculate trends
     total_calls = usage_data_sorted['PHONE_TOTAL_CALLS'].tolist()
     total_minutes = usage_data_sorted['PHONE_TOTAL_MINUTES_OF_USE'].tolist()
+    mrr_values = usage_data_sorted['MRR'].tolist()
     months = usage_data_sorted['MONTH'].tolist()
-    
+
     # Calculate growth rate
     if len(total_calls) > 1:
         growth_rate = ((total_calls[-1] - total_calls[0]) / total_calls[0] * 100) if total_calls[0] > 0 else 0
     else:
         growth_rate = 0
-    
+
     # Find peak and lowest months
     max_calls_idx = total_calls.index(max(total_calls))
     min_calls_idx = total_calls.index(min(total_calls))
-    
+
     # Device usage breakdown
     hardphone = usage_data_sorted['HARDPHONE_CALLS'].sum()
     softphone = usage_data_sorted['SOFTPHONE_CALLS'].sum()
     mobile = usage_data_sorted['MOBILE_CALLS'].sum()
-    
-    context = f"""
+
+    # Revenue metrics
+    current_mrr = mrr_values[-1] if len(mrr_values) > 0 else 0
+    avg_mrr = usage_data_sorted[usage_data_sorted['MRR'] > 0]['MRR'].mean()
+    total_revenue = usage_data_sorted['MRR'].sum()
+    current_tier = usage_data_sorted['PACKAGE_TIER'].iloc[-1] if len(usage_data_sorted) > 0 else "Unknown"
+
+    # Calculate MRR growth
+    if len(mrr_values) > 1 and mrr_values[0] > 0:
+        mrr_growth = ((mrr_values[-1] - mrr_values[0]) / mrr_values[0] * 100)
+    else:
+        mrr_growth = 0
+
+    # Check if we have account data (it might be None or a dict-like object)
+    has_account_data = latest_account is not None and isinstance(latest_account, (dict, pd.Series))
+
+    if has_account_data:
+        context = f"""
 Account: {selected_account}
-Company: {latest_account['COMPANY']}
-Package: {latest_account['PACKAGE_NAME']}
-Status: {latest_account['SA_ACCT_STATUS']}
-Brand: {latest_account['SA_BRAND_NAME']}
+Company: {latest_account.get('COMPANY', 'N/A')}
+Package: {latest_account.get('PACKAGE_NAME', 'N/A')}
+Status: {latest_account.get('SA_ACCT_STATUS', 'N/A')}
+Brand: {latest_account.get('SA_BRAND_NAME', 'N/A')}
+
+Revenue Metrics:
+- Current Package Tier: {current_tier}
+- Current MRR: ${current_mrr:.2f}
+- Average MRR: ${avg_mrr:.2f}
+- Total Revenue (All Months): ${total_revenue:,.2f}
+- MRR Growth: {mrr_growth:+.1f}%
 
 Usage Summary:
 - Average Calls per Month: {avg_calls:.0f}
 - Average Minutes per Month: {avg_minutes:.0f}
 - Total Months of Data: {len(usage_data_sorted)}
-- Growth Rate: {growth_rate:.1f}%
+- Usage Growth Rate: {growth_rate:.1f}%
+- Peak Usage Month: {months[max_calls_idx].strftime('%Y-%m')} ({total_calls[max_calls_idx]:.0f} calls)
+- Lowest Usage Month: {months[min_calls_idx].strftime('%Y-%m')} ({total_calls[min_calls_idx]:.0f} calls)
+
+Device Usage Breakdown:
+- Hardphone Calls: {hardphone:.0f}
+- Softphone Calls: {softphone:.0f}
+- Mobile Calls: {mobile:.0f}
+"""
+    else:
+        # Simplified context when account data is not available
+        context = f"""
+User ID: {selected_account}
+Data Source: Simulated Phone Usage Data
+
+Revenue Metrics:
+- Current Package Tier: {current_tier}
+- Current MRR: ${current_mrr:.2f}
+- Average MRR: ${avg_mrr:.2f}
+- Total Revenue (All Months): ${total_revenue:,.2f}
+- MRR Growth: {mrr_growth:+.1f}%
+
+Usage Summary:
+- Average Calls per Month: {avg_calls:.0f}
+- Average Minutes per Month: {avg_minutes:.0f}
+- Total Months of Data: {len(usage_data_sorted)}
+- Usage Growth Rate: {growth_rate:.1f}%
 - Peak Usage Month: {months[max_calls_idx].strftime('%Y-%m')} ({total_calls[max_calls_idx]:.0f} calls)
 - Lowest Usage Month: {months[min_calls_idx].strftime('%Y-%m')} ({total_calls[min_calls_idx]:.0f} calls)
 
@@ -510,9 +562,9 @@ def main():
     # Page selection
     page = st.sidebar.radio(
         "Navigation",
-        ["🏠 Overview", "👥 Account Analytics", "📈 Usage Trends",
+        ["🏠 Overview", "💰 Revenue Analytics", "👥 Account Analytics", "📈 Usage Trends",
          "⚠️ Churn Analysis", "🎯 User Segmentation", "📅 Vintage Analysis",
-         "🔍 Account Lookup", "🔐 Access & Roles"]
+         "📊 9BOX & Insights"]
     )
 
     # Load data
@@ -569,6 +621,8 @@ def main():
     # Render selected page
     if page == "🏠 Overview":
         show_overview(account_df, usage_df, churn_df)
+    elif page == "💰 Revenue Analytics":
+        show_revenue_analytics(usage_df, churn_df)
     elif page == "👥 Account Analytics":
         show_account_analytics(account_df)
     elif page == "📈 Usage Trends":
@@ -578,18 +632,16 @@ def main():
     elif page == "🎯 User Segmentation":
         show_user_segmentation(usage_df)
     elif page == "📅 Vintage Analysis":
-        show_vintage_analysis(account_df, churn_df)
-    elif page == "🔍 Account Lookup":
+        show_vintage_analysis(usage_df, churn_df)
+    elif page == "📊 9BOX & Insights":
         show_account_lookup(account_df, usage_df, churn_df)
-    elif page == "🔐 Access & Roles":
-        show_access_roles_dashboard()
 
 
 def show_overview(account_df, usage_df, churn_df):
     """Overview page with key metrics."""
     st.title("📊 Dashboard Overview")
 
-    # KPI Metrics
+    # KPI Metrics Row 1
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -608,6 +660,37 @@ def show_overview(account_df, usage_df, churn_df):
     with col4:
         avg_calls = usage_df['PHONE_TOTAL_CALLS'].mean()
         st.metric("Avg Calls/User/Month", f"{avg_calls:.0f}")
+
+    # KPI Metrics Row 2 - Revenue Metrics
+    st.markdown("### 💰 Revenue Metrics")
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        # Total MRR (most recent month)
+        latest_month = usage_df['MONTH'].max()
+        latest_mrr = usage_df[usage_df['MONTH'] == latest_month]['MRR'].sum()
+        st.metric("Current MRR", f"${latest_mrr:,.2f}")
+
+    with col2:
+        # Average MRR per user
+        avg_mrr = usage_df[usage_df['MRR'] > 0]['MRR'].mean()
+        st.metric("Avg MRR per User", f"${avg_mrr:.2f}")
+
+    with col3:
+        # ARR (Annual Recurring Revenue)
+        arr = latest_mrr * 12
+        st.metric("Estimated ARR", f"${arr:,.2f}")
+
+    with col4:
+        # Calculate MRR growth (comparing latest month to previous month)
+        months_sorted = sorted(usage_df['MONTH'].unique())
+        if len(months_sorted) >= 2:
+            prev_month = months_sorted[-2]
+            prev_mrr = usage_df[usage_df['MONTH'] == prev_month]['MRR'].sum()
+            mrr_growth = ((latest_mrr - prev_mrr) / prev_mrr * 100) if prev_mrr > 0 else 0
+            st.metric("MRR Growth (MoM)", f"{mrr_growth:+.1f}%")
+        else:
+            st.metric("MRR Growth (MoM)", "N/A")
 
     st.markdown("---")
 
@@ -647,6 +730,38 @@ def show_overview(account_df, usage_df, churn_df):
         # Use Streamlit bar chart for distribution
         st.bar_chart(status_df, x='Status', y='Count', height=400)
 
+    # Package Tier and Revenue Distribution
+    st.markdown("---")
+    st.subheader("Package Tier & Revenue Distribution")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Users by Package Tier**")
+        # Get latest package tier for each user
+        latest_usage = usage_df.sort_values('MONTH').groupby('USERID').last()
+        tier_counts = latest_usage['PACKAGE_TIER'].value_counts()
+
+        tier_df = pd.DataFrame({
+            'Package Tier': tier_counts.index,
+            'Number of Users': tier_counts.values
+        })
+
+        st.bar_chart(tier_df.set_index('Package Tier'), height=350)
+
+    with col2:
+        st.markdown("**MRR by Package Tier**")
+        # Calculate total MRR by package tier (most recent month)
+        latest_month_usage = usage_df[usage_df['MONTH'] == latest_month]
+        tier_mrr = latest_month_usage.groupby('PACKAGE_TIER')['MRR'].sum().sort_values(ascending=False)
+
+        tier_mrr_df = pd.DataFrame({
+            'Package Tier': tier_mrr.index,
+            'Total MRR': tier_mrr.values
+        })
+
+        st.bar_chart(tier_mrr_df.set_index('Package Tier'), height=350)
+
     # Usage distribution
     st.markdown("---")
     st.subheader("Usage Distribution Analysis")
@@ -674,17 +789,264 @@ def show_overview(account_df, usage_df, churn_df):
         st.subheader("User Activity Distribution")
         # User activity distribution table
         user_avg = usage_df.groupby('USERID')['PHONE_TOTAL_CALLS'].mean()
-        
+
         # Create bins for histogram effect
         bins = pd.cut(user_avg, bins=10)
         bin_counts = bins.value_counts().sort_index()
-        
+
         bin_df = pd.DataFrame({
             'Avg Calls Range': bin_counts.index.astype(str),
             'Number of Users': bin_counts.values
         })
-        
+
         st.bar_chart(bin_df.set_index('Avg Calls Range'), height=400)
+
+
+def show_revenue_analytics(usage_df, churn_df):
+    """Revenue analytics page with MRR and package tier analysis."""
+    st.title("💰 Revenue Analytics")
+
+    # Revenue KPIs
+    col1, col2, col3, col4 = st.columns(4)
+
+    latest_month = usage_df['MONTH'].max()
+    latest_month_data = usage_df[usage_df['MONTH'] == latest_month]
+
+    with col1:
+        total_mrr = latest_month_data['MRR'].sum()
+        st.metric("Current MRR", f"${total_mrr:,.2f}")
+
+    with col2:
+        active_users = latest_month_data[latest_month_data['MRR'] > 0]['USERID'].nunique()
+        st.metric("Paying Users", f"{active_users:,}")
+
+    with col3:
+        avg_arpu = total_mrr / active_users if active_users > 0 else 0
+        st.metric("ARPU (Avg Rev/User)", f"${avg_arpu:.2f}")
+
+    with col4:
+        arr = total_mrr * 12
+        st.metric("ARR", f"${arr:,.2f}")
+
+    st.markdown("---")
+
+    # MRR Trends
+    st.subheader("MRR Trends Over Time")
+
+    # Aggregate MRR by month
+    monthly_mrr = usage_df.groupby('MONTH').agg({
+        'MRR': 'sum',
+        'USERID': 'nunique'
+    }).reset_index()
+    monthly_mrr.columns = ['MONTH', 'Total MRR', 'Active Users']
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Total MRR by Month**")
+        mrr_chart = pd.DataFrame({
+            'MONTH': monthly_mrr['MONTH'],
+            'MRR': monthly_mrr['Total MRR']
+        })
+        st.line_chart(mrr_chart.set_index('MONTH'), height=400)
+
+    with col2:
+        st.markdown("**Active Paying Users**")
+        users_chart = pd.DataFrame({
+            'MONTH': monthly_mrr['MONTH'],
+            'Active Users': monthly_mrr['Active Users']
+        })
+        st.line_chart(users_chart.set_index('MONTH'), height=400)
+
+    # Package Tier Analysis
+    st.markdown("---")
+    st.subheader("Revenue by Package Tier")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**MRR Distribution by Tier**")
+        # Current month MRR by tier
+        tier_mrr = latest_month_data.groupby('PACKAGE_TIER')['MRR'].sum().sort_values(ascending=False)
+
+        tier_mrr_df = pd.DataFrame({
+            'Package Tier': tier_mrr.index,
+            'MRR': tier_mrr.values
+        })
+
+        st.bar_chart(tier_mrr_df.set_index('Package Tier'), height=400)
+
+        # Show percentages
+        total = tier_mrr.sum()
+        st.markdown("**Percentage of Total MRR:**")
+        for tier, mrr in tier_mrr.items():
+            pct = (mrr / total * 100) if total > 0 else 0
+            st.write(f"- {tier}: ${mrr:,.2f} ({pct:.1f}%)")
+
+    with col2:
+        st.markdown("**Average MRR per User by Tier**")
+        # Calculate average MRR per user by tier
+        tier_stats = latest_month_data[latest_month_data['MRR'] > 0].groupby('PACKAGE_TIER').agg({
+            'MRR': ['mean', 'count']
+        }).round(2)
+
+        tier_stats.columns = ['Avg MRR', 'User Count']
+        tier_stats = tier_stats.sort_values('Avg MRR', ascending=False)
+
+        st.dataframe(tier_stats, use_container_width=True)
+
+        st.markdown("**Key Insights:**")
+        highest_tier = tier_stats['Avg MRR'].idxmax()
+        highest_avg = tier_stats['Avg MRR'].max()
+        st.write(f"- Highest ARPU: {highest_tier} (${highest_avg:.2f})")
+
+        most_users_tier = tier_stats['User Count'].idxmax()
+        most_users = tier_stats['User Count'].max()
+        st.write(f"- Most Users: {most_users_tier} ({int(most_users):,} users)")
+
+    # MRR Trends by Package Tier
+    st.markdown("---")
+    st.subheader("MRR Trends by Package Tier")
+
+    monthly_tier_mrr = usage_df.groupby(['MONTH', 'PACKAGE_TIER'])['MRR'].sum().reset_index()
+    tier_pivot = monthly_tier_mrr.pivot(index='MONTH', columns='PACKAGE_TIER', values='MRR')
+
+    st.line_chart(tier_pivot, height=500)
+
+    # Revenue Retention and Churn Impact
+    st.markdown("---")
+    st.subheader("Revenue Retention & Churn Impact")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**MRR Lost to Churn**")
+
+        if not churn_df.empty:
+            # Merge churn data with usage data to calculate lost revenue
+            churned_users = churn_df['USERID'].unique()
+            churned_usage = usage_df[usage_df['USERID'].isin(churned_users)]
+
+            # Merge with churn dates
+            churned_usage = churned_usage.merge(churn_df[['USERID', 'CHURN_DATE']], on='USERID')
+
+            # Calculate MRR lost each month (MRR in the month before churn)
+            churned_usage['MONTHS_TO_CHURN'] = (
+                (churned_usage['CHURN_DATE'].dt.year - churned_usage['MONTH'].dt.year) * 12 +
+                (churned_usage['CHURN_DATE'].dt.month - churned_usage['MONTH'].dt.month)
+            )
+
+            # Get MRR from month before churn (MONTHS_TO_CHURN == 1)
+            pre_churn_mrr = churned_usage[churned_usage['MONTHS_TO_CHURN'] == 1].groupby(
+                churned_usage[churned_usage['MONTHS_TO_CHURN'] == 1]['CHURN_DATE'].dt.to_period('M')
+            )['MRR'].sum().reset_index()
+
+            pre_churn_mrr.columns = ['Churn Month', 'Lost MRR']
+            pre_churn_mrr['Churn Month'] = pre_churn_mrr['Churn Month'].astype(str)
+
+            if not pre_churn_mrr.empty:
+                st.bar_chart(pre_churn_mrr.set_index('Churn Month'), height=400)
+
+                total_lost = pre_churn_mrr['Lost MRR'].sum()
+                st.write(f"**Total MRR Lost to Churn:** ${total_lost:,.2f}")
+            else:
+                st.info("No churn data available for revenue analysis.")
+        else:
+            st.info("No churn data available.")
+
+    with col2:
+        st.markdown("**Revenue Retention Analysis**")
+
+        # Calculate MRR retention rate (month-over-month)
+        months = sorted(usage_df['MONTH'].unique())
+        retention_data = []
+
+        for i in range(1, len(months)):
+            prev_month = months[i-1]
+            curr_month = months[i]
+
+            # Users who had MRR in previous month
+            prev_users = set(usage_df[(usage_df['MONTH'] == prev_month) & (usage_df['MRR'] > 0)]['USERID'])
+            # Users who still have MRR in current month
+            curr_users = set(usage_df[(usage_df['MONTH'] == curr_month) & (usage_df['MRR'] > 0)]['USERID'])
+
+            # Users retained
+            retained_users = prev_users & curr_users
+
+            # Calculate revenue retention
+            prev_mrr_retained = usage_df[
+                (usage_df['MONTH'] == prev_month) &
+                (usage_df['USERID'].isin(retained_users))
+            ]['MRR'].sum()
+
+            curr_mrr_retained = usage_df[
+                (usage_df['MONTH'] == curr_month) &
+                (usage_df['USERID'].isin(retained_users))
+            ]['MRR'].sum()
+
+            retention_rate = (curr_mrr_retained / prev_mrr_retained * 100) if prev_mrr_retained > 0 else 0
+
+            retention_data.append({
+                'Month': curr_month,
+                'Retention Rate': retention_rate
+            })
+
+        if retention_data:
+            retention_df = pd.DataFrame(retention_data)
+            st.line_chart(retention_df.set_index('Month'), height=400)
+
+            avg_retention = retention_df['Retention Rate'].mean()
+            st.write(f"**Avg Revenue Retention Rate:** {avg_retention:.1f}%")
+        else:
+            st.info("Not enough data to calculate retention.")
+
+    # Package Tier Migration Analysis
+    st.markdown("---")
+    st.subheader("Package Tier Migration")
+
+    st.markdown("""
+    Track how users move between package tiers over time.
+    """)
+
+    # Detect tier changes
+    user_tier_changes = []
+    for user_id in usage_df['USERID'].unique():
+        user_data = usage_df[usage_df['USERID'] == user_id].sort_values('MONTH')
+        tiers = user_data['PACKAGE_TIER'].tolist()
+        months = user_data['MONTH'].tolist()
+
+        for i in range(1, len(tiers)):
+            if tiers[i] != tiers[i-1]:
+                user_tier_changes.append({
+                    'USERID': user_id,
+                    'From Tier': tiers[i-1],
+                    'To Tier': tiers[i],
+                    'Month': months[i],
+                    'Change Type': 'Upgrade' if tiers[i] > tiers[i-1] else 'Downgrade'
+                })
+
+    if user_tier_changes:
+        changes_df = pd.DataFrame(user_tier_changes)
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Tier Changes by Type**")
+            change_counts = changes_df['Change Type'].value_counts()
+            change_count_df = pd.DataFrame({
+                'Change Type': change_counts.index,
+                'Count': change_counts.values
+            })
+            st.bar_chart(change_count_df.set_index('Change Type'), height=300)
+
+        with col2:
+            st.markdown("**Recent Tier Changes**")
+            recent_changes = changes_df.sort_values('Month', ascending=False).head(10)
+            display_changes = recent_changes[['USERID', 'From Tier', 'To Tier', 'Month', 'Change Type']].copy()
+            display_changes['Month'] = display_changes['Month'].dt.strftime('%Y-%m')
+            st.dataframe(display_changes, use_container_width=True, height=300)
+    else:
+        st.info("No package tier changes detected in the data.")
 
 
 def show_account_analytics(account_df):
@@ -958,143 +1320,338 @@ def show_user_segmentation(usage_df):
     """User segmentation page."""
     st.title("🎯 User Segmentation")
 
-    st.markdown("""
-    Users are segmented based on average monthly phone usage:
-    - **Heavy Users**: >120 calls/month
-    - **Medium Users**: 50-120 calls/month
-    - **Light Users**: <50 calls/month
-    """)
+    # Create tabs for different segmentation views
+    tab1, tab2, tab3 = st.tabs(["📞 By Usage", "💰 By Revenue", "📦 By Package Tier"])
 
-    # Calculate average usage per user
-    user_avg = usage_df.groupby('USERID')['PHONE_TOTAL_CALLS'].mean().reset_index()
-    user_avg.columns = ['USERID', 'Avg Calls']
+    # Tab 1: Usage-based segmentation
+    with tab1:
+        st.markdown("""
+        Users are segmented based on average monthly phone usage:
+        - **Heavy Users**: >120 calls/month
+        - **Medium Users**: 50-120 calls/month
+        - **Light Users**: <50 calls/month
+        """)
 
-    # Segment users
-    def segment_user(avg_calls):
-        if avg_calls > 120:
-            return 'Heavy'
-        elif avg_calls >= 50:
-            return 'Medium'
-        else:
-            return 'Light'
+        # Calculate average usage per user
+        user_avg = usage_df.groupby('USERID')['PHONE_TOTAL_CALLS'].mean().reset_index()
+        user_avg.columns = ['USERID', 'Avg Calls']
 
-    user_avg['Segment'] = user_avg['Avg Calls'].apply(segment_user)
+        # Segment users
+        def segment_user(avg_calls):
+            if avg_calls > 120:
+                return 'Heavy'
+            elif avg_calls >= 50:
+                return 'Medium'
+            else:
+                return 'Light'
 
-    # Segment metrics
-    col1, col2, col3 = st.columns(3)
+        user_avg['Segment'] = user_avg['Avg Calls'].apply(segment_user)
 
-    heavy_count = (user_avg['Segment'] == 'Heavy').sum()
-    medium_count = (user_avg['Segment'] == 'Medium').sum()
-    light_count = (user_avg['Segment'] == 'Light').sum()
+        # Segment metrics
+        col1, col2, col3 = st.columns(3)
 
-    with col1:
-        st.metric("Heavy Users", f"{heavy_count:,}",
-                 f"{heavy_count/len(user_avg)*100:.1f}%")
+        heavy_count = (user_avg['Segment'] == 'Heavy').sum()
+        medium_count = (user_avg['Segment'] == 'Medium').sum()
+        light_count = (user_avg['Segment'] == 'Light').sum()
 
-    with col2:
-        st.metric("Medium Users", f"{medium_count:,}",
-                 f"{medium_count/len(user_avg)*100:.1f}%")
+        with col1:
+            st.metric("Heavy Users", f"{heavy_count:,}",
+                     f"{heavy_count/len(user_avg)*100:.1f}%")
 
-    with col3:
-        st.metric("Light Users", f"{light_count:,}",
-                 f"{light_count/len(user_avg)*100:.1f}%")
+        with col2:
+            st.metric("Medium Users", f"{medium_count:,}",
+                     f"{medium_count/len(user_avg)*100:.1f}%")
 
-    st.markdown("---")
+        with col3:
+            st.metric("Light Users", f"{light_count:,}",
+                     f"{light_count/len(user_avg)*100:.1f}%")
 
-    # Visualization
-    col1, col2 = st.columns(2)
+        st.markdown("---")
 
-    with col1:
-        st.subheader("User Segment Distribution")
-        
-        segment_counts = user_avg['Segment'].value_counts()
-        segment_df = pd.DataFrame({
-            'Segment': segment_counts.index,
-            'Count': segment_counts.values
-        })
-        
-        st.bar_chart(segment_df.set_index('Segment'), height=350)
+        # Visualization
+        col1, col2 = st.columns(2)
 
-    with col2:
-        st.subheader("Segment Statistics by Call Volume")
-        
-        usage_with_segment = usage_df.merge(user_avg[['USERID', 'Segment']], on='USERID')
-        
-        # Group by segment and get statistics
-        segment_stats = usage_with_segment.groupby('Segment')['PHONE_TOTAL_CALLS'].agg(['mean', 'median']).round(0)
-        segment_stats.columns = ['Mean Calls', 'Median Calls']
-        
+        with col1:
+            st.subheader("User Segment Distribution")
+
+            segment_counts = user_avg['Segment'].value_counts()
+            segment_df = pd.DataFrame({
+                'Segment': segment_counts.index,
+                'Count': segment_counts.values
+            })
+
+            st.bar_chart(segment_df.set_index('Segment'), height=350)
+
+        with col2:
+            st.subheader("Segment Statistics by Call Volume")
+
+            usage_with_segment = usage_df.merge(user_avg[['USERID', 'Segment']], on='USERID')
+
+            # Group by segment and get statistics
+            segment_stats = usage_with_segment.groupby('Segment')['PHONE_TOTAL_CALLS'].agg(['mean', 'median']).round(0)
+            segment_stats.columns = ['Mean Calls', 'Median Calls']
+
+            st.dataframe(segment_stats, use_container_width=True)
+
+        # Segment trends over time
+        st.markdown("---")
+        st.subheader("Segment Trends Over Time")
+
+        # Aggregate by segment and month
+        monthly_segment = usage_with_segment.groupby(['MONTH', 'Segment']).agg({
+            'PHONE_TOTAL_CALLS': 'mean'
+        }).reset_index()
+
+        # Create pivot table for multi-line chart
+        monthly_segment_pivot = monthly_segment.pivot(index='MONTH', columns='Segment', values='PHONE_TOTAL_CALLS')
+
+        st.line_chart(monthly_segment_pivot, height=400)
+
+        # Detailed segment stats
+        st.markdown("---")
+        st.subheader("Detailed Segment Statistics")
+
+        segment_stats = usage_with_segment.groupby('Segment').agg({
+            'PHONE_TOTAL_CALLS': ['mean', 'median', 'std'],
+            'PHONE_TOTAL_MINUTES_OF_USE': ['mean', 'median'],
+            'PHONE_MAU': 'mean',
+            'USERID': 'nunique'
+        }).round(2)
+
+        segment_stats.columns = ['_'.join(col).strip() for col in segment_stats.columns.values]
+        segment_stats = segment_stats.reset_index()
+
         st.dataframe(segment_stats, use_container_width=True)
 
-    # Segment trends over time
-    st.markdown("---")
-    st.subheader("Segment Trends Over Time")
+    # Tab 2: Revenue-based segmentation
+    with tab2:
+        st.markdown("""
+        Users are segmented based on average monthly MRR:
+        - **High Value**: >$100/month
+        - **Medium Value**: $50-$100/month
+        - **Low Value**: <$50/month
+        """)
 
-    # Aggregate by segment and month
-    monthly_segment = usage_with_segment.groupby(['MONTH', 'Segment']).agg({
-        'PHONE_TOTAL_CALLS': 'mean'
-    }).reset_index()
+        # Calculate average MRR per user
+        user_mrr = usage_df[usage_df['MRR'] > 0].groupby('USERID')['MRR'].mean().reset_index()
+        user_mrr.columns = ['USERID', 'Avg MRR']
 
-    # Create pivot table for multi-line chart
-    monthly_segment_pivot = monthly_segment.pivot(index='MONTH', columns='Segment', values='PHONE_TOTAL_CALLS')
-    
-    st.line_chart(monthly_segment_pivot, height=400)
+        # Segment users by revenue
+        def segment_by_revenue(avg_mrr):
+            if avg_mrr > 100:
+                return 'High Value'
+            elif avg_mrr >= 50:
+                return 'Medium Value'
+            else:
+                return 'Low Value'
 
-    # Detailed segment stats
-    st.markdown("---")
-    st.subheader("Detailed Segment Statistics")
+        user_mrr['Revenue Segment'] = user_mrr['Avg MRR'].apply(segment_by_revenue)
 
-    segment_stats = usage_with_segment.groupby('Segment').agg({
-        'PHONE_TOTAL_CALLS': ['mean', 'median', 'std'],
-        'PHONE_TOTAL_MINUTES_OF_USE': ['mean', 'median'],
-        'PHONE_MAU': 'mean',
-        'USERID': 'nunique'
-    }).round(2)
+        # Segment metrics
+        col1, col2, col3 = st.columns(3)
 
-    segment_stats.columns = ['_'.join(col).strip() for col in segment_stats.columns.values]
-    segment_stats = segment_stats.reset_index()
+        high_count = (user_mrr['Revenue Segment'] == 'High Value').sum()
+        medium_count = (user_mrr['Revenue Segment'] == 'Medium Value').sum()
+        low_count = (user_mrr['Revenue Segment'] == 'Low Value').sum()
 
-    st.dataframe(segment_stats, use_container_width=True)
+        with col1:
+            st.metric("High Value Users", f"{high_count:,}",
+                     f"{high_count/len(user_mrr)*100:.1f}%")
+
+        with col2:
+            st.metric("Medium Value Users", f"{medium_count:,}",
+                     f"{medium_count/len(user_mrr)*100:.1f}%")
+
+        with col3:
+            st.metric("Low Value Users", f"{low_count:,}",
+                     f"{low_count/len(user_mrr)*100:.1f}%")
+
+        st.markdown("---")
+
+        # Visualization
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Revenue Segment Distribution")
+
+            segment_counts = user_mrr['Revenue Segment'].value_counts()
+            segment_df = pd.DataFrame({
+                'Segment': segment_counts.index,
+                'Count': segment_counts.values
+            })
+
+            st.bar_chart(segment_df.set_index('Segment'), height=350)
+
+        with col2:
+            st.subheader("Revenue Statistics by Segment")
+
+            # Merge with usage data
+            usage_with_revenue_segment = usage_df[usage_df['MRR'] > 0].merge(
+                user_mrr[['USERID', 'Revenue Segment']], on='USERID'
+            )
+
+            # Group by segment and get statistics
+            revenue_stats = usage_with_revenue_segment.groupby('Revenue Segment')['MRR'].agg(['mean', 'median']).round(2)
+            revenue_stats.columns = ['Mean MRR', 'Median MRR']
+
+            st.dataframe(revenue_stats, use_container_width=True)
+
+        # Revenue segment trends over time
+        st.markdown("---")
+        st.subheader("MRR Trends by Revenue Segment")
+
+        # Aggregate by segment and month
+        monthly_revenue_segment = usage_with_revenue_segment.groupby(['MONTH', 'Revenue Segment']).agg({
+            'MRR': 'mean'
+        }).reset_index()
+
+        # Create pivot table for multi-line chart
+        monthly_revenue_pivot = monthly_revenue_segment.pivot(index='MONTH', columns='Revenue Segment', values='MRR')
+
+        st.line_chart(monthly_revenue_pivot, height=400)
+
+        # Total revenue contribution by segment
+        st.markdown("---")
+        st.subheader("Revenue Contribution by Segment")
+
+        latest_month = usage_df['MONTH'].max()
+        latest_usage = usage_df[usage_df['MONTH'] == latest_month].merge(
+            user_mrr[['USERID', 'Revenue Segment']], on='USERID', how='inner'
+        )
+
+        segment_revenue = latest_usage.groupby('Revenue Segment')['MRR'].sum().sort_values(ascending=False)
+        total_revenue = segment_revenue.sum()
+
+        revenue_contribution = pd.DataFrame({
+            'Segment': segment_revenue.index,
+            'Total MRR': segment_revenue.values,
+            'Percentage': (segment_revenue.values / total_revenue * 100).round(1)
+        })
+
+        st.dataframe(revenue_contribution, use_container_width=True)
+
+    # Tab 3: Package Tier segmentation
+    with tab3:
+        st.markdown("""
+        Users segmented by their current package tier.
+        """)
+
+        # Get latest package tier for each user
+        latest_month = usage_df['MONTH'].max()
+        user_tiers = usage_df[usage_df['MONTH'] == latest_month][['USERID', 'PACKAGE_TIER', 'MRR']].copy()
+
+        # Tier metrics
+        tier_counts = user_tiers['PACKAGE_TIER'].value_counts()
+
+        st.subheader("Users by Package Tier")
+        col1, col2, col3, col4 = st.columns(4)
+
+        tiers = ['Basic', 'Standard', 'Premium', 'Enterprise']
+        cols = [col1, col2, col3, col4]
+
+        for tier, col in zip(tiers, cols):
+            count = tier_counts.get(tier, 0)
+            pct = (count / len(user_tiers) * 100) if len(user_tiers) > 0 else 0
+            with col:
+                st.metric(tier, f"{count:,}", f"{pct:.1f}%")
+
+        st.markdown("---")
+
+        # Visualization
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Package Tier Distribution")
+
+            tier_df = pd.DataFrame({
+                'Package Tier': tier_counts.index,
+                'Count': tier_counts.values
+            })
+
+            st.bar_chart(tier_df.set_index('Package Tier'), height=350)
+
+        with col2:
+            st.subheader("Revenue by Package Tier")
+
+            tier_revenue = user_tiers.groupby('PACKAGE_TIER')['MRR'].sum().sort_values(ascending=False)
+
+            tier_revenue_df = pd.DataFrame({
+                'Package Tier': tier_revenue.index,
+                'Total MRR': tier_revenue.values
+            })
+
+            st.bar_chart(tier_revenue_df.set_index('Package Tier'), height=350)
+
+        # Detailed package tier statistics
+        st.markdown("---")
+        st.subheader("Package Tier Statistics")
+
+        tier_stats = user_tiers.groupby('PACKAGE_TIER').agg({
+            'MRR': ['mean', 'median', 'sum'],
+            'USERID': 'count'
+        }).round(2)
+
+        tier_stats.columns = ['Avg MRR', 'Median MRR', 'Total MRR', 'User Count']
+        tier_stats = tier_stats.sort_values('Avg MRR', ascending=False)
+
+        st.dataframe(tier_stats, use_container_width=True)
+
+        # Package tier trends over time
+        st.markdown("---")
+        st.subheader("Package Tier User Trends")
+
+        monthly_tier_users = usage_df.groupby(['MONTH', 'PACKAGE_TIER'])['USERID'].nunique().reset_index()
+        tier_users_pivot = monthly_tier_users.pivot(index='MONTH', columns='PACKAGE_TIER', values='USERID')
+
+        st.line_chart(tier_users_pivot, height=400)
 
 
-def show_vintage_analysis(account_df, churn_df):
+def show_vintage_analysis(usage_df, churn_df):
     """Vintage analysis page showing cohort-based churn by signup month."""
     st.title("📅 Vintage Analysis")
 
     st.markdown("""
-    Vintage (cohort) analysis tracks cumulative churn rates by signup month.
-    Each vintage represents accounts that signed up in the same month.
-    The X-axis shows tenure (months since signup), starting at 0.
+    Vintage (cohort) analysis tracks cumulative churn rates by signup period.
+
+    **How to read this chart:**
+    - Each line represents a cohort (vintage) of users who signed up in the same period
+    - **X-axis**: Months on Book (0 = signup month, increases each month after signup)
+    - **Y-axis**: Cumulative Churn Rate (%) - percentage of the cohort that has churned
+    - Lines should trend upward over time as more users churn
+
+    **Granularity Options:**
+    - **Manual Selection**: Choose specific monthly vintages to compare
+    - **By Quarter**: Aggregate vintages by quarter (e.g., 2024-Q1, 2024-Q2)
+    - **By Year**: Aggregate vintages by year (e.g., 2023, 2024)
     """)
 
-    # Step 1: Determine signup month (first month) for each account
-    signup_data = account_df.groupby('SERVICE_ACCOUNT_ID')['MONTH'].min().reset_index()
-    signup_data.columns = ['SERVICE_ACCOUNT_ID', 'SIGNUP_MONTH']
+    # Step 1: Determine signup month (first month) for each user from usage data
+    signup_data = usage_df.groupby('USERID')['MONTH'].min().reset_index()
+    signup_data.columns = ['USERID', 'SIGNUP_MONTH']
     signup_data['VINTAGE'] = signup_data['SIGNUP_MONTH'].dt.to_period('M').astype(str)
 
-    # Step 2: Merge signup data with all account data
-    account_with_vintage = account_df.merge(
-        signup_data[['SERVICE_ACCOUNT_ID', 'SIGNUP_MONTH', 'VINTAGE']],
-        on='SERVICE_ACCOUNT_ID'
+    # Step 2: Merge signup data with all usage data
+    usage_with_vintage = usage_df.merge(
+        signup_data[['USERID', 'SIGNUP_MONTH', 'VINTAGE']],
+        on='USERID'
     )
 
     # Step 3: Calculate tenure (months since signup)
-    account_with_vintage['TENURE'] = (
-        (account_with_vintage['MONTH'].dt.year - account_with_vintage['SIGNUP_MONTH'].dt.year) * 12 +
-        (account_with_vintage['MONTH'].dt.month - account_with_vintage['SIGNUP_MONTH'].dt.month)
+    usage_with_vintage['TENURE'] = (
+        (usage_with_vintage['MONTH'].dt.year - usage_with_vintage['SIGNUP_MONTH'].dt.year) * 12 +
+        (usage_with_vintage['MONTH'].dt.month - usage_with_vintage['SIGNUP_MONTH'].dt.month)
     )
 
     # Step 4: Merge with churn data
-    account_with_vintage = account_with_vintage.merge(
+    usage_with_vintage = usage_with_vintage.merge(
         churn_df[['USERID', 'CHURN_DATE']],
-        left_on='SERVICE_ACCOUNT_ID',
-        right_on='USERID',
+        on='USERID',
         how='left'
     )
 
     # Calculate churn month tenure (months from signup to churn)
-    account_with_vintage['CHURNED'] = account_with_vintage['CHURN_DATE'].notna()
-    account_with_vintage['CHURN_TENURE'] = account_with_vintage.apply(
+    usage_with_vintage['CHURNED'] = usage_with_vintage['CHURN_DATE'].notna()
+    usage_with_vintage['CHURN_TENURE'] = usage_with_vintage.apply(
         lambda row: (
             (row['CHURN_DATE'].year - row['SIGNUP_MONTH'].year) * 12 +
             (row['CHURN_DATE'].month - row['SIGNUP_MONTH'].month)
@@ -1106,20 +1663,13 @@ def show_vintage_analysis(account_df, churn_df):
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
 
-    with col1:
-        metric_type = st.radio(
-            "Select Metric",
-            ["By Account Count", "By Revenue (if available)"],
-            horizontal=True
-        )
-
     with col2:
         min_cohort_size = st.number_input(
             "Min Cohort Size",
             min_value=1,
             max_value=1000,
-            value=10,
-            help="Only show vintages with at least this many accounts"
+            value=5,
+            help="Only show vintages with at least this many users"
         )
 
     # Calculate cohort statistics
@@ -1153,28 +1703,29 @@ def show_vintage_analysis(account_df, churn_df):
     churn_by_vintage_tenure = []
 
     for vintage in cohort_sizes['VINTAGE'].values:
-        # Get all accounts in this vintage
-        vintage_accounts = account_with_vintage[account_with_vintage['VINTAGE'] == vintage]
-        total_accounts = vintage_accounts['SERVICE_ACCOUNT_ID'].nunique()
+        # Get all users in this vintage
+        vintage_users = usage_with_vintage[usage_with_vintage['VINTAGE'] == vintage]
+        total_users = vintage_users['USERID'].nunique()
 
         # Get max tenure for this vintage
-        max_tenure = vintage_accounts['TENURE'].max()
+        max_tenure = vintage_users['TENURE'].max()
 
-        # For each tenure month
+        # For each tenure month from 0 to max
         for tenure in range(0, int(max_tenure) + 1):
-            # Count accounts that had churned by this tenure
-            churned_by_tenure = vintage_accounts[
-                (vintage_accounts['CHURNED']) &
-                (vintage_accounts['CHURN_TENURE'] <= tenure)
-            ]['SERVICE_ACCOUNT_ID'].nunique()
+            # Count users that had churned BY (on or before) this tenure
+            # This ensures cumulative counting
+            churned_by_tenure = vintage_users[
+                (vintage_users['CHURNED']) &
+                (vintage_users['CHURN_TENURE'] <= tenure)
+            ]['USERID'].nunique()
 
-            cumulative_churn_rate = (churned_by_tenure / total_accounts * 100) if total_accounts > 0 else 0
+            cumulative_churn_rate = (churned_by_tenure / total_users * 100) if total_users > 0 else 0
 
             churn_by_vintage_tenure.append({
                 'VINTAGE': vintage,
                 'TENURE': tenure,
-                'TOTAL_ACCOUNTS': total_accounts,
-                'CHURNED_ACCOUNTS': churned_by_tenure,
+                'TOTAL_USERS': total_users,
+                'CHURNED_USERS': churned_by_tenure,
                 'CUMULATIVE_CHURN_RATE': cumulative_churn_rate
             })
 
@@ -1197,8 +1748,9 @@ def show_vintage_analysis(account_df, churn_df):
     with col1:
         filter_type = st.radio(
             "Filter Vintages By:",
-            ["Manual Selection", "By Quarter", "By Year", "By Segment"],
-            horizontal=False
+            ["Manual Selection", "By Quarter", "By Year"],
+            horizontal=False,
+            key="vintage_filter_type"
         )
 
     # Prepare vintage list based on filter type
@@ -1211,7 +1763,8 @@ def show_vintage_analysis(account_df, churn_df):
             selected_quarters = st.multiselect(
                 "Select Quarters",
                 options=quarters,
-                default=quarters[-4:] if len(quarters) >= 4 else quarters
+                default=quarters,  # Select all quarters by default
+                key=f"vintage_quarters_{len(quarters)}"  # Key changes with data
             )
 
         # Filter vintages by selected quarters
@@ -1230,189 +1783,300 @@ def show_vintage_analysis(account_df, churn_df):
             selected_years = st.multiselect(
                 "Select Years",
                 options=years,
-                default=years[-2:] if len(years) >= 2 else years
+                default=years,  # Select all years by default
+                key=f"vintage_years_{len(years)}"  # Key changes with data
             )
 
         # Filter vintages by selected years
         selected_vintages = [v for v in available_vintages if v[:4] in selected_years]
-
-    elif filter_type == "By Segment":
-        with col2:
-            segment_option = st.selectbox(
-                "Segment By:",
-                ["Package", "Company", "Tier"]
-            )
-
-        with col3:
-            # Get segment values from account data
-            if segment_option == "Package":
-                segment_col = 'PACKAGE_NAME'
-            elif segment_option == "Company":
-                segment_col = 'COMPANY'
-            else:  # Tier
-                segment_col = 'TIER_NAME'
-
-            # Get unique segment values
-            segment_values = sorted(account_df[segment_col].unique())
-            selected_segments = st.multiselect(
-                f"Select {segment_option}(s)",
-                options=segment_values,
-                default=segment_values[:3] if len(segment_values) >= 3 else segment_values
-            )
-
-        # Filter vintages by accounts in selected segments
-        if selected_segments:
-            segment_accounts = account_df[account_df[segment_col].isin(selected_segments)]['SERVICE_ACCOUNT_ID'].unique()
-            segment_vintages = signup_data[signup_data['SERVICE_ACCOUNT_ID'].isin(segment_accounts)]['VINTAGE'].unique()
-            selected_vintages = [v for v in available_vintages if v in segment_vintages]
-        else:
-            selected_vintages = []
 
     else:  # Manual Selection
         with col2:
             selected_vintages = st.multiselect(
                 "Select vintages to compare",
                 options=available_vintages,
-                default=available_vintages[-6:] if len(available_vintages) >= 6 else available_vintages
+                default=available_vintages,  # Select all vintages by default
+                key=f"vintage_manual_{len(available_vintages)}"  # Key changes with data
             )
 
     # Display analysis
     st.markdown("---")
-    st.subheader(f"Vintage Cohort Analysis ({len(selected_vintages)} vintages selected)")
 
     if selected_vintages:
         # Filter data
-        filtered_churn = churn_df_analysis[churn_df_analysis['VINTAGE'].isin(selected_vintages)]
+        filtered_churn = churn_df_analysis[churn_df_analysis['VINTAGE'].isin(selected_vintages)].copy()
 
-        # Ensure we have complete tenure range from 0 to max
-        filtered_pivot = filtered_churn.pivot(
-            index='TENURE',
-            columns='VINTAGE',
-            values='CUMULATIVE_CHURN_RATE'
-        )
+        # Aggregate data based on filter type
+        if filter_type == "By Quarter":
+            st.subheader(f"Vintage Cohort Analysis - Quarterly ({len(selected_quarters)} quarters selected)")
 
-        # Reindex to ensure tenure starts at 0 and goes to max_tenure
-        filtered_pivot = filtered_pivot.reindex(range(0, max_tenure_overall + 1), fill_value=None)
+            # Add quarter column to filtered_churn
+            filtered_churn['QUARTER'] = filtered_churn['VINTAGE'].apply(
+                lambda v: v[:4] + '-Q' + str((int(v[5:7])-1)//3 + 1)
+            )
 
-        st.line_chart(filtered_pivot, height=500)
-        st.caption(f"X-axis: Tenure (0 to {max_tenure_overall} months) | Y-axis: Cumulative churn rate (%)")
+            # Aggregate by quarter and tenure
+            quarterly_churn = filtered_churn.groupby(['QUARTER', 'TENURE']).agg({
+                'TOTAL_USERS': 'sum',
+                'CHURNED_USERS': 'sum'
+            }).reset_index()
 
-        # Show data table
-        st.markdown("### Detailed Churn Data")
+            # Recalculate cumulative churn rate for aggregated data
+            quarterly_churn['CUMULATIVE_CHURN_RATE'] = (
+                quarterly_churn['CHURNED_USERS'] / quarterly_churn['TOTAL_USERS'] * 100
+            ).fillna(0)
 
-        # Display summary for selected vintages
-        summary_data = []
-        for vintage in selected_vintages:
-            vintage_data = filtered_churn[filtered_churn['VINTAGE'] == vintage]
-            if not vintage_data.empty:
-                max_tenure_data = vintage_data[vintage_data['TENURE'] == vintage_data['TENURE'].max()].iloc[0]
-                summary_data.append({
-                    'Vintage': vintage,
-                    'Total Accounts': int(max_tenure_data['TOTAL_ACCOUNTS']),
-                    'Max Tenure (Months)': int(max_tenure_data['TENURE']),
-                    'Final Churn Rate (%)': round(max_tenure_data['CUMULATIVE_CHURN_RATE'], 2),
-                    'Churned Accounts': int(max_tenure_data['CHURNED_ACCOUNTS'])
-                })
+            # Create pivot for chart
+            display_pivot = quarterly_churn.pivot(
+                index='TENURE',
+                columns='QUARTER',
+                values='CUMULATIVE_CHURN_RATE'
+            )
 
-        summary_df = pd.DataFrame(summary_data)
-        st.dataframe(summary_df, use_container_width=True)
+            # Reindex to ensure tenure starts at 0 and goes to max_tenure
+            display_pivot = display_pivot.reindex(range(0, max_tenure_overall + 1), fill_value=None)
 
-        # Optionally show raw data
-        with st.expander("Show Raw Cohort Data"):
-            display_data = filtered_churn.pivot_table(
+            st.line_chart(display_pivot, height=500)
+            st.caption(f"**Months on Book:** 0 to {max_tenure_overall} months | **Cumulative Churn Rate:** Percentage of cohort churned | **Granularity:** Quarterly")
+
+            # Show data table
+            st.markdown("### Detailed Churn Data by Quarter")
+
+            # Display summary for selected quarters
+            summary_data = []
+            for quarter in sorted(quarterly_churn['QUARTER'].unique()):
+                quarter_data = quarterly_churn[quarterly_churn['QUARTER'] == quarter]
+                if not quarter_data.empty:
+                    max_tenure_data = quarter_data[quarter_data['TENURE'] == quarter_data['TENURE'].max()].iloc[0]
+                    summary_data.append({
+                        'Quarter': quarter,
+                        'Total Users': int(max_tenure_data['TOTAL_USERS']),
+                        'Max Tenure (Months)': int(max_tenure_data['TENURE']),
+                        'Final Churn Rate (%)': round(max_tenure_data['CUMULATIVE_CHURN_RATE'], 2),
+                        'Churned Users': int(max_tenure_data['CHURNED_USERS'])
+                    })
+
+            summary_df = pd.DataFrame(summary_data)
+            st.dataframe(summary_df, use_container_width=True)
+
+            # Optionally show raw data
+            with st.expander("Show Raw Cohort Data"):
+                st.dataframe(display_pivot.round(2), use_container_width=True)
+
+        elif filter_type == "By Year":
+            st.subheader(f"Vintage Cohort Analysis - Yearly ({len(selected_years)} years selected)")
+
+            # Add year column to filtered_churn
+            filtered_churn['YEAR'] = filtered_churn['VINTAGE'].apply(lambda v: v[:4])
+
+            # Aggregate by year and tenure
+            yearly_churn = filtered_churn.groupby(['YEAR', 'TENURE']).agg({
+                'TOTAL_USERS': 'sum',
+                'CHURNED_USERS': 'sum'
+            }).reset_index()
+
+            # Recalculate cumulative churn rate for aggregated data
+            yearly_churn['CUMULATIVE_CHURN_RATE'] = (
+                yearly_churn['CHURNED_USERS'] / yearly_churn['TOTAL_USERS'] * 100
+            ).fillna(0)
+
+            # Create pivot for chart
+            display_pivot = yearly_churn.pivot(
+                index='TENURE',
+                columns='YEAR',
+                values='CUMULATIVE_CHURN_RATE'
+            )
+
+            # Reindex to ensure tenure starts at 0 and goes to max_tenure
+            display_pivot = display_pivot.reindex(range(0, max_tenure_overall + 1), fill_value=None)
+
+            st.line_chart(display_pivot, height=500)
+            st.caption(f"**Months on Book:** 0 to {max_tenure_overall} months | **Cumulative Churn Rate:** Percentage of cohort churned | **Granularity:** Yearly")
+
+            # Show data table
+            st.markdown("### Detailed Churn Data by Year")
+
+            # Display summary for selected years
+            summary_data = []
+            for year in sorted(yearly_churn['YEAR'].unique()):
+                year_data = yearly_churn[yearly_churn['YEAR'] == year]
+                if not year_data.empty:
+                    max_tenure_data = year_data[year_data['TENURE'] == year_data['TENURE'].max()].iloc[0]
+                    summary_data.append({
+                        'Year': year,
+                        'Total Users': int(max_tenure_data['TOTAL_USERS']),
+                        'Max Tenure (Months)': int(max_tenure_data['TENURE']),
+                        'Final Churn Rate (%)': round(max_tenure_data['CUMULATIVE_CHURN_RATE'], 2),
+                        'Churned Users': int(max_tenure_data['CHURNED_USERS'])
+                    })
+
+            summary_df = pd.DataFrame(summary_data)
+            st.dataframe(summary_df, use_container_width=True)
+
+            # Optionally show raw data
+            with st.expander("Show Raw Cohort Data"):
+                st.dataframe(display_pivot.round(2), use_container_width=True)
+
+        else:  # Manual Selection - keep monthly granularity
+            st.subheader(f"Vintage Cohort Analysis - Monthly ({len(selected_vintages)} vintages selected)")
+
+            # Ensure we have complete tenure range from 0 to max
+            display_pivot = filtered_churn.pivot(
                 index='TENURE',
                 columns='VINTAGE',
-                values='CUMULATIVE_CHURN_RATE',
-                aggfunc='first'
-            ).round(2)
-            st.dataframe(display_data, use_container_width=True)
-    else:
-        st.info("Please select at least one vintage to display the analysis.")
+                values='CUMULATIVE_CHURN_RATE'
+            )
 
-    # Additional insights
-    if selected_vintages:
+            # Reindex to ensure tenure starts at 0 and goes to max_tenure
+            display_pivot = display_pivot.reindex(range(0, max_tenure_overall + 1), fill_value=None)
+
+            st.line_chart(display_pivot, height=500)
+            st.caption(f"**Months on Book:** 0 to {max_tenure_overall} months | **Cumulative Churn Rate:** Percentage of cohort churned | **Granularity:** Monthly")
+
+            # Show data table
+            st.markdown("### Detailed Churn Data by Month")
+
+            # Display summary for selected vintages
+            summary_data = []
+            for vintage in selected_vintages:
+                vintage_data = filtered_churn[filtered_churn['VINTAGE'] == vintage]
+                if not vintage_data.empty:
+                    max_tenure_data = vintage_data[vintage_data['TENURE'] == vintage_data['TENURE'].max()].iloc[0]
+                    summary_data.append({
+                        'Vintage': vintage,
+                        'Total Users': int(max_tenure_data['TOTAL_USERS']),
+                        'Max Tenure (Months)': int(max_tenure_data['TENURE']),
+                        'Final Churn Rate (%)': round(max_tenure_data['CUMULATIVE_CHURN_RATE'], 2),
+                        'Churned Users': int(max_tenure_data['CHURNED_USERS'])
+                    })
+
+            summary_df = pd.DataFrame(summary_data)
+            st.dataframe(summary_df, use_container_width=True)
+
+            # Optionally show raw data
+            with st.expander("Show Raw Cohort Data"):
+                st.dataframe(display_pivot.round(2), use_container_width=True)
+
+        # Additional insights - adapt to filter type
         st.markdown("---")
-        st.subheader("Vintage Performance at Key Milestones")
+        st.subheader("Cohort Performance at Key Milestones")
 
         # Calculate churn rate at specific tenure milestones
         milestones = [6, 12, 24, 36]  # 6 months, 1 year, 2 years, 3 years
 
-        milestone_data = []
-        for vintage in selected_vintages:
-            vintage_churn = churn_df_analysis[churn_df_analysis['VINTAGE'] == vintage]
-            if vintage_churn.empty:
-                continue
+        if filter_type == "By Quarter":
+            milestone_data = []
+            for quarter in sorted(quarterly_churn['QUARTER'].unique()):
+                quarter_churn = quarterly_churn[quarterly_churn['QUARTER'] == quarter]
+                if quarter_churn.empty:
+                    continue
 
-            row = {'Vintage': vintage}
-            for milestone in milestones:
-                milestone_churn = vintage_churn[vintage_churn['TENURE'] == milestone]
-                if not milestone_churn.empty:
-                    row[f'{milestone}M Churn %'] = round(milestone_churn.iloc[0]['CUMULATIVE_CHURN_RATE'], 2)
-                else:
-                    row[f'{milestone}M Churn %'] = None
-            milestone_data.append(row)
+                row = {'Quarter': quarter}
+                for milestone in milestones:
+                    milestone_churn = quarter_churn[quarter_churn['TENURE'] == milestone]
+                    if not milestone_churn.empty:
+                        row[f'{milestone}M Churn %'] = round(milestone_churn.iloc[0]['CUMULATIVE_CHURN_RATE'], 2)
+                    else:
+                        row[f'{milestone}M Churn %'] = None
+                milestone_data.append(row)
 
-        if milestone_data:
-            milestone_df = pd.DataFrame(milestone_data)
-            st.dataframe(milestone_df, use_container_width=True)
-            st.caption("Churn rates at key tenure milestones (6, 12, 24, 36 months) for selected vintages")
+            if milestone_data:
+                milestone_df = pd.DataFrame(milestone_data)
+                st.dataframe(milestone_df, use_container_width=True)
+                st.caption("Churn rates at key tenure milestones (6, 12, 24, 36 months) for selected quarters")
+
+        elif filter_type == "By Year":
+            milestone_data = []
+            for year in sorted(yearly_churn['YEAR'].unique()):
+                year_churn = yearly_churn[yearly_churn['YEAR'] == year]
+                if year_churn.empty:
+                    continue
+
+                row = {'Year': year}
+                for milestone in milestones:
+                    milestone_churn = year_churn[year_churn['TENURE'] == milestone]
+                    if not milestone_churn.empty:
+                        row[f'{milestone}M Churn %'] = round(milestone_churn.iloc[0]['CUMULATIVE_CHURN_RATE'], 2)
+                    else:
+                        row[f'{milestone}M Churn %'] = None
+                milestone_data.append(row)
+
+            if milestone_data:
+                milestone_df = pd.DataFrame(milestone_data)
+                st.dataframe(milestone_df, use_container_width=True)
+                st.caption("Churn rates at key tenure milestones (6, 12, 24, 36 months) for selected years")
+
+        else:  # Manual Selection
+            milestone_data = []
+            for vintage in selected_vintages:
+                vintage_churn = churn_df_analysis[churn_df_analysis['VINTAGE'] == vintage]
+                if vintage_churn.empty:
+                    continue
+
+                row = {'Vintage': vintage}
+                for milestone in milestones:
+                    milestone_churn = vintage_churn[vintage_churn['TENURE'] == milestone]
+                    if not milestone_churn.empty:
+                        row[f'{milestone}M Churn %'] = round(milestone_churn.iloc[0]['CUMULATIVE_CHURN_RATE'], 2)
+                    else:
+                        row[f'{milestone}M Churn %'] = None
+                milestone_data.append(row)
+
+            if milestone_data:
+                milestone_df = pd.DataFrame(milestone_data)
+                st.dataframe(milestone_df, use_container_width=True)
+                st.caption("Churn rates at key tenure milestones (6, 12, 24, 36 months) for selected vintages")
+
+    else:
+        st.info("Please select at least one vintage to display the analysis.")
 
 
 def show_account_lookup(account_df, usage_df, churn_df):
-    """Account lookup page with detailed usage trends."""
-    st.title("🔍 Account Lookup")
-    
-    st.markdown("Enter an Account ID to view detailed usage trends for a specific account.")
-    
-    # Get unique account IDs for dropdown
-    unique_accounts = sorted(account_df['SERVICE_ACCOUNT_ID'].unique())
-    
+    """9BOX & Insights page with detailed usage trends and AI analysis."""
+    st.title("📊 9BOX & Insights")
+
+    st.markdown("Select a User ID to view detailed usage and revenue trends.")
+
+    # Get unique user IDs from usage data (this is what we actually have)
+    unique_users = sorted(usage_df['USERID'].unique())
+
     # Account selector
     selected_account = st.selectbox(
-        "Select Account ID",
-        options=unique_accounts,
-        help="Choose an account ID from the dropdown or search"
+        "Select User ID",
+        options=unique_users,
+        help="Choose a user ID from the dropdown or search"
     )
-    
+
     if selected_account:
-        # Filter data for selected account
-        account_data = account_df[account_df['SERVICE_ACCOUNT_ID'] == selected_account]
+        # Filter data for selected user
         usage_data = usage_df[usage_df['USERID'] == selected_account]
-        
-        if account_data.empty:
-            st.warning(f"No account data found for Account ID: {selected_account}")
-            return
-        
+
+        # Try to get account data if available (may not exist for simulated users)
+        account_data = account_df[account_df['SERVICE_ACCOUNT_ID'] == selected_account]
+
         if usage_data.empty:
-            st.warning(f"No usage data found for Account ID: {selected_account}")
-            
-            # Still show account details if available
-            latest_account = account_data.sort_values('MONTH').iloc[-1]
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Company", latest_account['COMPANY'])
-            with col2:
-                st.metric("Brand", latest_account['SA_BRAND_NAME'])
-            with col3:
-                st.metric("Package", latest_account['PACKAGE_NAME'])
-            with col4:
-                st.metric("Status", latest_account['SA_ACCT_STATUS'])
+            st.warning(f"No usage data found for User ID: {selected_account}")
             return
-        
+
         # Display account summary
         st.markdown("### Account Summary")
-        latest_account = account_data.sort_values('MONTH').iloc[-1]
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.info(f"**Company:** {latest_account['COMPANY']}")
-        with col2:
-            st.info(f"**Brand:** {latest_account['SA_BRAND_NAME']}")
-        with col3:
-            st.info(f"**Package:** {latest_account['PACKAGE_NAME']}")
-        with col4:
-            st.info(f"**Status:** {latest_account['SA_ACCT_STATUS']}")
+
+        # If we have account data from ACCOUNT_ATTRIBUTES_MONTHLY, show it
+        if not account_data.empty:
+            latest_account = account_data.sort_values('MONTH').iloc[-1]
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.info(f"**Company:** {latest_account['COMPANY']}")
+            with col2:
+                st.info(f"**Brand:** {latest_account['SA_BRAND_NAME']}")
+            with col3:
+                st.info(f"**Package:** {latest_account['PACKAGE_NAME']}")
+            with col4:
+                st.info(f"**Status:** {latest_account['SA_ACCT_STATUS']}")
+        else:
+            # For simulated users, show what we have from usage data
+            st.info(f"**User ID:** {selected_account} | **Data Source:** Simulated Phone Usage Data")
         
         # Check if account has churned
         if not churn_df.empty and selected_account in churn_df['USERID'].values:
@@ -1430,7 +2094,7 @@ def show_account_lookup(account_df, usage_df, churn_df):
         # Usage metrics summary
         st.markdown("### Usage Metrics Summary")
         col1, col2, col3, col4 = st.columns(4)
-        
+
         with col1:
             avg_calls = usage_data['PHONE_TOTAL_CALLS'].mean()
             st.metric("Avg Calls/Month", f"{avg_calls:.0f}")
@@ -1443,11 +2107,112 @@ def show_account_lookup(account_df, usage_df, churn_df):
         with col4:
             avg_mau = usage_data['PHONE_MAU'].mean()
             st.metric("Avg MAU", f"{avg_mau:.0f}")
+
+        # Revenue metrics
+        st.markdown("### Revenue Metrics")
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            latest_mrr = usage_data_sorted['MRR'].iloc[-1] if len(usage_data_sorted) > 0 else 0
+            st.metric("Current MRR", f"${latest_mrr:.2f}")
+        with col2:
+            avg_mrr = usage_data[usage_data['MRR'] > 0]['MRR'].mean()
+            st.metric("Avg MRR", f"${avg_mrr:.2f}")
+        with col3:
+            total_revenue = usage_data['MRR'].sum()
+            st.metric("Total Revenue (All Months)", f"${total_revenue:,.2f}")
+        with col4:
+            # Get package tier (from latest month)
+            current_tier = usage_data_sorted['PACKAGE_TIER'].iloc[-1] if len(usage_data_sorted) > 0 else "Unknown"
+            st.metric("Package Tier", current_tier)
         
         st.markdown("---")
-        
+
+        # Quick Q&A Section
+        st.markdown("### 💬 Ask Questions About This Account")
+
+        # Get available models for Q&A
+        qa_models, qa_model_source = get_available_llm_models()
+
+        # Model selector (shared across Q&A and Advanced Insights)
+        if qa_models and len(qa_models) > 0:
+            selected_qa_model = st.selectbox(
+                "Select AI Model",
+                options=qa_models,
+                key="shared_model_selector",
+                help="Choose an AI model (applies to both Q&A and Advanced Insights)"
+            )
+        else:
+            selected_qa_model = None
+
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            if qa_models and len(qa_models) > 0:
+
+                # Question input
+                user_question = st.text_input(
+                    "Your Question",
+                    placeholder="e.g., What trends do you see in this account's usage? Is this account at risk of churning?",
+                    key="user_question_input"
+                )
+
+                # Ask button
+                if st.button("🔍 Ask", type="primary", key="ask_button"):
+                    if user_question:
+                        with st.spinner(f"Thinking with {selected_qa_model}..."):
+                            # Prepare context
+                            account_info = latest_account if not account_data.empty else None
+                            account_context = prepare_account_context(
+                                selected_account, account_info, usage_data_sorted, avg_calls, avg_minutes
+                            )
+
+                            # Create prompt
+                            qa_prompt = f"""Based on the following account information, please answer this question:
+
+Question: {user_question}
+
+Account Context:
+{account_context}
+
+Please provide a clear, concise answer based on the data provided."""
+
+                            # Generate response
+                            try:
+                                answer, input_tokens, output_tokens = generate_ai_insights(
+                                    selected_qa_model,
+                                    qa_prompt,
+                                    ""  # No additional context needed
+                                )
+
+                                # Display answer
+                                st.markdown("#### 💡 Answer:")
+                                st.markdown(answer)
+
+                                # Show token usage
+                                total_tokens = input_tokens + output_tokens
+                                st.caption(f"Token usage: {input_tokens:,} input + {output_tokens:,} output = {total_tokens:,} total")
+
+                            except Exception as e:
+                                st.error(f"Error generating answer: {str(e)}")
+                    else:
+                        st.warning("Please enter a question first.")
+            else:
+                st.info("AI models not available. Please check your Snowflake Cortex configuration.")
+
+        with col2:
+            st.markdown("**Quick Tips:**")
+            st.markdown("""
+            - Ask about trends
+            - Request predictions
+            - Seek recommendations
+            - Compare metrics
+            """)
+
+        st.markdown("---")
+
         # AI Insights Section
-        st.markdown("### 🤖 AI Insights Assistant")
+        st.markdown("### 🤖 AI Insights Assistant (Advanced)")
 
         # Model pricing information (approximate Snowflake Cortex pricing per 1M tokens)
         # Based on Snowflake documentation
@@ -1483,41 +2248,17 @@ def show_account_lookup(account_df, usage_df, churn_df):
             "claude-3-sonnet": {"cost": 3.00, "per": "1M tokens"},
         }
 
-        # LLM Provider Selection - Use Snowflake Cortex models
+        # Use the shared model selector from Q&A section
+        # Display model pricing information
+        if selected_qa_model and selected_qa_model in model_pricing:
+            st.info(f"**Current Model:** {selected_qa_model} (~${model_pricing[selected_qa_model]['cost']:.2f}/{model_pricing[selected_qa_model]['per']} est.)")
+        elif selected_qa_model:
+            st.info(f"**Current Model:** {selected_qa_model}")
+
+        # Set llm_provider to the shared selection
+        llm_provider = selected_qa_model
+
         col1, col2 = st.columns([2, 3])
-        with col1:
-            # Get available models
-            available_models, model_source = get_available_llm_models()
-            models_displayed_count = len(available_models) if available_models else 0
-
-            # Simple status indicator
-            if model_source == 'sql':
-                st.success(f"✅ Connected to Cortex AI ({models_displayed_count} models available)")
-            else:
-                st.info(f"ℹ️ Using standard Cortex model list ({models_displayed_count} models available)")
-
-            if len(available_models) > 0:
-                # Format model names with pricing if available
-                model_options = []
-                for model in available_models:
-                    if model in model_pricing:
-                        price_info = f" (~${model_pricing[model]['cost']:.2f}/{model_pricing[model]['per']} est.)"
-                        model_options.append(f"{model}{price_info}")
-                    else:
-                        model_options.append(model)
-
-                selected_option = st.selectbox(
-                    "Select AI Model",
-                    options=model_options,
-                    index=0,
-                    help=f"Choose the AI model from Snowflake Cortex. {models_displayed_count} model(s) available. Pricing shown is estimated based on Snowflake documentation."
-                )
-
-                # Extract actual model name (remove pricing info)
-                llm_provider = selected_option.split(" (")[0]
-            else:
-                st.error("⚠️ No LLM models available. Please check your Snowflake Cortex configuration.")
-                llm_provider = None
 
         # Initialize session state for prompt text
         if 'prompt_text' not in st.session_state:
@@ -1595,8 +2336,10 @@ def show_account_lookup(account_df, usage_df, churn_df):
                 st.error("Please ensure LLM models are available in your Snowflake environment.")
             elif user_prompt:
                 # Prepare account summary for context
+                # Pass latest_account if available, otherwise None
+                account_info = latest_account if not account_data.empty else None
                 account_context = prepare_account_context(
-                    selected_account, latest_account, usage_data_sorted, avg_calls, avg_minutes
+                    selected_account, account_info, usage_data_sorted, avg_calls, avg_minutes
                 )
 
                 # Display loading
@@ -1653,13 +2396,41 @@ def show_account_lookup(account_df, usage_df, churn_df):
                 st.warning("Please enter a question before generating insights.")
         
         st.markdown("---")
-        
+
+        # Revenue trends
+        st.markdown("### Revenue Trends Over Time")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Monthly Recurring Revenue (MRR)")
+            mrr_chart = pd.DataFrame({
+                'MONTH': usage_data_sorted['MONTH'],
+                'MRR': usage_data_sorted['MRR']
+            })
+            st.line_chart(mrr_chart.set_index('MONTH'), height=400)
+
+        with col2:
+            st.subheader("Package Tier History")
+            # Show package tier changes over time
+            tier_history = usage_data_sorted[['MONTH', 'PACKAGE_TIER']].copy()
+            tier_history['MONTH_STR'] = tier_history['MONTH'].dt.strftime('%Y-%m')
+
+            st.dataframe(
+                tier_history[['MONTH_STR', 'PACKAGE_TIER']].rename(
+                    columns={'MONTH_STR': 'Month', 'PACKAGE_TIER': 'Package Tier'}
+                ),
+                use_container_width=True,
+                height=400
+            )
+
         # Usage trends over time
+        st.markdown("---")
         st.markdown("### Usage Trends Over Time")
-        
+
         # Primary metrics
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.subheader("Total Calls & Minutes")
             primary_metrics = pd.DataFrame({
@@ -1668,7 +2439,7 @@ def show_account_lookup(account_df, usage_df, churn_df):
                 'Total Minutes': usage_data_sorted['PHONE_TOTAL_MINUTES_OF_USE']
             })
             st.line_chart(primary_metrics.set_index('MONTH'), height=400)
-        
+
         with col2:
             st.subheader("Voice & Fax Calls")
             call_types = pd.DataFrame({
@@ -1719,16 +2490,18 @@ def show_account_lookup(account_df, usage_df, churn_df):
         
         # Select columns to display
         display_columns = [
-            'MONTH', 'PHONE_TOTAL_CALLS', 'PHONE_TOTAL_MINUTES_OF_USE',
+            'MONTH', 'PACKAGE_TIER', 'MRR', 'PHONE_TOTAL_CALLS', 'PHONE_TOTAL_MINUTES_OF_USE',
             'VOICE_CALLS', 'FAX_CALLS', 'PHONE_TOTAL_NUM_INBOUND_CALLS',
             'PHONE_TOTAL_NUM_OUTBOUND_CALLS', 'HARDPHONE_CALLS', 'SOFTPHONE_CALLS',
             'MOBILE_CALLS', 'PHONE_MAU'
         ]
-        
+
         display_table = usage_data_sorted[display_columns].copy()
         display_table['MONTH'] = display_table['MONTH'].dt.strftime('%Y-%m')
         display_table = display_table.rename(columns={
             'MONTH': 'Month',
+            'PACKAGE_TIER': 'Package Tier',
+            'MRR': 'MRR',
             'PHONE_TOTAL_CALLS': 'Total Calls',
             'PHONE_TOTAL_MINUTES_OF_USE': 'Total Minutes',
             'VOICE_CALLS': 'Voice Calls',
