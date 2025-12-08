@@ -64,11 +64,14 @@ def main():
         )
 
         # Metadata/Context for better SQL generation
+        # Use auto-discovered schema if available
+        default_schema = st.session_state.get('auto_schema_context', '')
         metadata_context = st.text_area(
             "📋 Database Schema Context (Optional)",
+            value=default_schema,
             placeholder="Example:\n- USAGE_DATA table contains: user_id, timestamp, action, device_type\n- CUSTOMERS table contains: customer_id, name, signup_date, plan_type\n- Tables are related by user_id = customer_id",
             height=120,
-            help="Provide information about your tables, columns, and relationships to help generate better SQL queries"
+            help="Provide information about your tables, columns, and relationships to help generate better SQL queries. Click 'Discover Available Tables' below to auto-populate this field."
         )
 
         # Optional: Provide available table list
@@ -105,7 +108,7 @@ def main():
     st.header("❓ Your Question")
 
     # Add a button to discover available tables
-    if st.button("🔍 Discover Available Tables", help="Click to see what tables exist in your database"):
+    if st.button("🔍 Discover Available Tables & Auto-Fill Schema", help="Click to discover tables and automatically populate schema context"):
         try:
             # Query to get all tables in current schema
             tables_query = "SHOW TABLES"
@@ -121,8 +124,36 @@ def main():
                 for idx, table_name in enumerate(table_names):
                     cols[idx % 3].write(f"• `{table_name}`")
 
-                # Suggest adding to schema context
-                st.info("💡 Tip: Copy these table names and add them to the 'Database Schema Context' in the sidebar with column information for better results!")
+                # Build schema context automatically
+                schema_context_lines = []
+                st.info("🔍 Discovering column information for each table...")
+
+                for table_name in table_names[:10]:  # Limit to first 10 tables to avoid timeouts
+                    try:
+                        # Get column info for each table
+                        desc_query = f"DESCRIBE TABLE {table_name}"
+                        desc_df = session.sql(desc_query).to_pandas()
+
+                        if not desc_df.empty:
+                            # Extract column names
+                            col_names = desc_df['name'].tolist() if 'name' in desc_df.columns else desc_df.iloc[:, 0].tolist()
+                            # Limit to first 10 columns to keep it concise
+                            col_names_str = ', '.join(col_names[:10])
+                            if len(col_names) > 10:
+                                col_names_str += f", ... ({len(col_names)} total columns)"
+
+                            schema_context_lines.append(f"- {table_name} table contains: {col_names_str}")
+                    except Exception as e:
+                        schema_context_lines.append(f"- {table_name} table (could not fetch columns)")
+
+                # Store in session state to auto-populate the text area
+                auto_schema_context = "\n".join(schema_context_lines)
+                st.session_state['auto_schema_context'] = auto_schema_context
+
+                st.success("✅ Schema context has been auto-populated in the sidebar! Scroll down and check the 'Database Schema Context' field.")
+
+                with st.expander("📋 Preview of Auto-Generated Schema Context"):
+                    st.code(auto_schema_context, language="text")
             else:
                 st.warning("No tables found in the current schema.")
         except Exception as e:
