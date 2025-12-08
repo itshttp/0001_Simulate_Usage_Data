@@ -97,10 +97,25 @@ Database Information:"""
             }
 
         except Exception as e:
+            error_message = str(e)
+
+            # Check if it's a table not found error
+            if "does not exist or not authorized" in error_message.lower():
+                # Try to discover available tables
+                try:
+                    discovered_tables_df = self.session.sql("SHOW TABLES").to_pandas()
+                    if not discovered_tables_df.empty:
+                        table_names_col = 'name' if 'name' in discovered_tables_df.columns else discovered_tables_df.columns[1]
+                        discovered_tables = discovered_tables_df[table_names_col].tolist()
+                        error_message += f"\n\n💡 Available tables in your database: {', '.join(discovered_tables[:20])}"
+                        error_message += "\n\nPlease click '🔍 Discover Available Tables & Auto-Fill Schema' button to automatically populate the database schema, then try again."
+                except:
+                    error_message += "\n\n💡 Please click '🔍 Discover Available Tables & Auto-Fill Schema' button to see what tables are available."
+
             return {
                 "status": "error",
                 "agent": self.agent_name,
-                "error": str(e),
+                "error": error_message,
                 "query": sql_query if 'sql_query' in locals() else "SQL generation failed"
             }
 

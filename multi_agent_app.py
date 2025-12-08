@@ -166,6 +166,10 @@ def main():
         help="Enter your question here. The agents will work together to answer it by collecting data, checking quality, and providing insights."
     )
 
+    # Show reminder if no schema context is provided
+    if not st.session_state.get('auto_schema_context', ''):
+        st.info("💡 **Tip:** Click the '🔍 Discover Available Tables & Auto-Fill Schema' button above to automatically detect your database schema for better results!")
+
     st.divider()
 
     col1, col2 = st.columns([3, 1])
