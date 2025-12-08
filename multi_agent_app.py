@@ -216,7 +216,18 @@ def main():
         # Check for errors
         if "error" in results:
             st.error(f"❌ {results['error']}")
-            st.json(results.get("details", {}))
+
+            # Show details if available
+            details = results.get("details", {})
+            if details:
+                with st.expander("📋 Error Details"):
+                    st.json(details)
+
+                # If there's an error message with table suggestions, highlight it
+                error_msg = details.get('error', '')
+                if 'Available tables' in error_msg:
+                    st.warning("⚠️ It looks like the query used a table that doesn't exist. Please click '🔍 Discover Available Tables & Auto-Fill Schema' and try again.")
+
             st.stop()
         
         # Display results

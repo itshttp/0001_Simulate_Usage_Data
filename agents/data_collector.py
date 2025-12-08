@@ -47,9 +47,9 @@ Return only the SQL query, nothing else."""
         try:
             # Get available tables (optional)
             available_tables = context.get('available_tables', [])
-            metadata_context = context.get('metadata_context', '')
+            metadata_context = context.get('metadata_context', '').strip()
 
-            # If no tables specified and no metadata, try to discover tables automatically
+            # If no tables specified and no meaningful metadata, try to discover tables automatically
             if not available_tables and not metadata_context:
                 try:
                     self.log("No table information provided. Discovering available tables...")
@@ -59,6 +59,22 @@ Return only the SQL query, nothing else."""
                         table_names_col = 'name' if 'name' in discovered_tables_df.columns else discovered_tables_df.columns[1]
                         available_tables = discovered_tables_df[table_names_col].tolist()
                         self.log(f"Discovered {len(available_tables)} tables: {', '.join(available_tables[:5])}...")
+
+                        # Also try to get column info for better SQL generation
+                        schema_lines = []
+                        for table_name in available_tables[:10]:
+                            try:
+                                desc_df = self.session.sql(f"DESCRIBE TABLE {table_name}").to_pandas()
+                                if not desc_df.empty:
+                                    col_names_col = 'name' if 'name' in desc_df.columns else desc_df.columns[0]
+                                    cols = desc_df[col_names_col].tolist()[:10]
+                                    schema_lines.append(f"- {table_name}: {', '.join(cols)}")
+                            except:
+                                schema_lines.append(f"- {table_name}")
+
+                        if schema_lines:
+                            metadata_context = "\n".join(schema_lines)
+                            self.log(f"Auto-generated schema context for {len(schema_lines)} tables")
                 except Exception as e:
                     self.log(f"Could not auto-discover tables: {str(e)}")
 
