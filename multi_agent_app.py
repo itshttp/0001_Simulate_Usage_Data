@@ -157,7 +157,26 @@ def main():
 
                 # Show helpful example questions based on discovered tables
                 if any('ACCOUNT_ATTRIBUTES_MONTHLY' in t for t in table_names):
-                    st.info("💡 **Detected ACCOUNT_ATTRIBUTES_MONTHLY table** - Try questions like:\n- 'Show me top 10 accounts with biggest ARR reduction in the last month'\n- 'Which accounts had the largest MRR decrease recently?'\n- 'Show me accounts with declining monthly revenue'")
+                    # Get specific columns for ACCOUNT_ATTRIBUTES_MONTHLY
+                    try:
+                        desc_df = session.sql("DESCRIBE TABLE ACCOUNT_ATTRIBUTES_MONTHLY").to_pandas()
+                        col_names_col = 'name' if 'name' in desc_df.columns else desc_df.columns[0]
+                        available_cols = desc_df[col_names_col].str.upper().tolist()
+
+                        # Build smart suggestions based on actual columns
+                        suggestions = ["💡 **Detected ACCOUNT_ATTRIBUTES_MONTHLY table**"]
+
+                        if any('ARR' in col for col in available_cols):
+                            suggestions.append("- 'Show me top 10 accounts with biggest ARR_CURRENT reduction'")
+                        if any('MRR' in col for col in available_cols):
+                            suggestions.append("- 'Which accounts had the largest MRR_CURRENT decrease?'")
+                        if any('CHURN' in col for col in available_cols):
+                            suggestions.append("- 'Show me accounts with CHURN_RISK_SCORE above 0.7'")
+
+                        if len(suggestions) > 1:
+                            st.info("\n".join(suggestions) + f"\n\n**Available columns:** {', '.join(available_cols[:15])}")
+                    except:
+                        st.info("💡 **Detected ACCOUNT_ATTRIBUTES_MONTHLY table** - Review the schema context in the sidebar for available columns")
                 elif any('USAGE' in t.upper() for t in table_names):
                     st.info("💡 **Detected usage tables** - Try questions like:\n- 'Show me top 10 users by usage this month'\n- 'Which accounts have the highest data usage?'")
             else:
