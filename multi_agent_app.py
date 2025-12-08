@@ -40,8 +40,8 @@ def main():
         llm_model = st.selectbox(
             "Select LLM Model",
             options=[
-                "mistral-large2",
                 "snowflake-arctic",
+                "mistral-large2",
                 "llama3.1-70b",
                 "llama3.1-405b",
                 "reka-flash",
