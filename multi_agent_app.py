@@ -154,6 +154,12 @@ def main():
 
                 with st.expander("📋 Preview of Auto-Generated Schema Context"):
                     st.code(auto_schema_context, language="text")
+
+                # Show helpful example questions based on discovered tables
+                if any('ACCOUNT_ATTRIBUTES_MONTHLY' in t for t in table_names):
+                    st.info("💡 **Detected ACCOUNT_ATTRIBUTES_MONTHLY table** - Try questions like:\n- 'Show me top 10 accounts with biggest ARR reduction in the last month'\n- 'Which accounts had the largest MRR decrease recently?'\n- 'Show me accounts with declining monthly revenue'")
+                elif any('USAGE' in t.upper() for t in table_names):
+                    st.info("💡 **Detected usage tables** - Try questions like:\n- 'Show me top 10 users by usage this month'\n- 'Which accounts have the highest data usage?'")
             else:
                 st.warning("No tables found in the current schema.")
         except Exception as e:
