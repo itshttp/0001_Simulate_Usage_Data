@@ -58,17 +58,24 @@ def create_snowflake_infrastructure():
         print("Creating Warehouse...")
         print("-" * 80)
         try:
+            # EFFICIENCY OPTIMIZATION: Reduced auto-suspend to 60 seconds for better cost control
+            # Warehouse size recommendations:
+            # - XSMALL: Good for dashboards, light workloads (1 credit/hour)
+            # - SMALL: For medium workloads, faster queries (2 credits/hour)
+            # - MEDIUM: For heavy analytics, large data processing (4 credits/hour)
+            # - LARGE+: For very large datasets, production workloads (8+ credits/hour)
             cursor.execute(f"""
                 CREATE WAREHOUSE IF NOT EXISTS {warehouse_name}
                 WITH WAREHOUSE_SIZE = 'XSMALL'
-                AUTO_SUSPEND = 300
+                AUTO_SUSPEND = 60
                 AUTO_RESUME = TRUE
                 INITIALLY_SUSPENDED = FALSE
             """)
             print(f"✓ Warehouse '{warehouse_name}' created successfully")
-            print(f"  - Size: XSMALL")
-            print(f"  - Auto-suspend: 300 seconds")
+            print(f"  - Size: XSMALL (1 credit/hour when running)")
+            print(f"  - Auto-suspend: 60 seconds (optimized for cost efficiency)")
             print(f"  - Auto-resume: Enabled")
+            print(f"  - 💡 Tip: Adjust size based on workload - XSMALL is good for dashboards")
         except Exception as e:
             print(f"✗ Error creating warehouse: {e}")
             raise
