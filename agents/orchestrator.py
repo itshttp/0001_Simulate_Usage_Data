@@ -56,14 +56,23 @@ class AgentOrchestrator:
         if "available_tables" in user_prompts:
             self.context["available_tables"] = user_prompts["available_tables"]
 
+        if "metadata_context" in user_prompts:
+            self.context["metadata_context"] = user_prompts["metadata_context"]
+
+        if "user_question" in user_prompts:
+            self.context["user_question"] = user_prompts["user_question"]
+
         # Step 1: Data Collection
         self._log_step("Starting data collection...")
         if progress_callback:
             progress_callback(0.25, "🔍 Data Collection Agent working...")
 
+        # Use user_question if provided, otherwise use collector prompt
+        collection_prompt = user_prompts.get("user_question", "") or user_prompts.get("collector", "")
+
         result = self.agents["collector"].execute(
             self.context,
-            user_prompts.get("collector", "")
+            collection_prompt
         )
         self.context["data_collector_result"] = result
 

@@ -57,10 +57,10 @@ def main():
 
         st.subheader("1️⃣ Data Collection Agent")
         collector_prompt = st.text_area(
-            "Data Query Requirement",
-            "Show all available tables in the current database",
+            "Data Query Requirement (Optional - Use Question field below instead)",
+            "",
             height=100,
-            help="First run: 'Show all available tables' to see what data you have. Then use actual table names."
+            help="This field is optional. Your main question should be entered in the '❓ Your Question' field below. This is only for advanced SQL query customization."
         )
 
         # Metadata/Context for better SQL generation
@@ -100,13 +100,48 @@ def main():
         st.divider()
         
         st.info("4️⃣ Compliance Agent will automatically check for PII")
-    
+
     # Main interface
+    st.header("❓ Your Question")
+
+    # Add a button to discover available tables
+    if st.button("🔍 Discover Available Tables", help="Click to see what tables exist in your database"):
+        try:
+            # Query to get all tables in current schema
+            tables_query = "SHOW TABLES"
+            tables_df = session.sql(tables_query).to_pandas()
+
+            if not tables_df.empty:
+                st.success(f"Found {len(tables_df)} tables in your database:")
+                # Display table names
+                table_names = tables_df['name'].tolist() if 'name' in tables_df.columns else tables_df.iloc[:, 1].tolist()
+
+                # Show in columns for better display
+                cols = st.columns(3)
+                for idx, table_name in enumerate(table_names):
+                    cols[idx % 3].write(f"• `{table_name}`")
+
+                # Suggest adding to schema context
+                st.info("💡 Tip: Copy these table names and add them to the 'Database Schema Context' in the sidebar with column information for better results!")
+            else:
+                st.warning("No tables found in the current schema.")
+        except Exception as e:
+            st.error(f"Error discovering tables: {str(e)}")
+
+    user_question = st.text_area(
+        "Enter your data analysis question",
+        placeholder="Example: What are the top 5 users by usage? How many active users do we have this month?",
+        height=100,
+        help="Enter your question here. The agents will work together to answer it by collecting data, checking quality, and providing insights."
+    )
+
+    st.divider()
+
     col1, col2 = st.columns([3, 1])
-    
+
     with col1:
         run_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
-    
+
     with col2:
         if st.button("🔄 Reset", use_container_width=True):
             st.rerun()
@@ -129,7 +164,8 @@ def main():
             "collector": collector_prompt,
             "qa": qa_prompt,
             "analyst": analyst_prompt,
-            "metadata_context": metadata_context if metadata_context else ""
+            "metadata_context": metadata_context if metadata_context else "",
+            "user_question": user_question if user_question else ""
         }
 
         if available_tables and available_tables != "Leave empty to auto-discover tables":

@@ -22,8 +22,16 @@ class DataCollectorAgent(BaseAgent):
         super().__init__(session, "DataCollector", model=model)
         self.system_prompt = """You are a Snowflake SQL expert.
 Generate SQL queries based on user requirements.
-Return only pure SQL code without any explanation.
-Use SELECT statements to query data."""
+
+CRITICAL RULES:
+1. Return ONLY pure SQL code - no explanations, no markdown, no comments
+2. Use SELECT statements to query data
+3. If table names are not specified, use common naming patterns (e.g., ACCOUNTS, CUSTOMERS, USERS, ORDERS, etc.)
+4. Always use proper column names based on the context provided
+5. For "recent" or "latest" records, use ORDER BY with a timestamp/date column DESC
+6. Limit results when asked for "top N" or specific count
+
+Return only the SQL query, nothing else."""
 
     def execute(self, context: dict, user_prompt: str) -> dict:
         """
@@ -41,15 +49,33 @@ Use SELECT statements to query data."""
             available_tables = context.get('available_tables', [])
             metadata_context = context.get('metadata_context', '')
 
-            # Build enhanced prompt with metadata
-            enhanced_prompt = f"""Requirement: {user_prompt}
+            # If no tables specified and no metadata, try to discover tables automatically
+            if not available_tables and not metadata_context:
+                try:
+                    self.log("No table information provided. Discovering available tables...")
+                    discovered_tables_df = self.session.sql("SHOW TABLES").to_pandas()
+                    if not discovered_tables_df.empty:
+                        # Extract table names from the result
+                        table_names_col = 'name' if 'name' in discovered_tables_df.columns else discovered_tables_df.columns[1]
+                        available_tables = discovered_tables_df[table_names_col].tolist()
+                        self.log(f"Discovered {len(available_tables)} tables: {', '.join(available_tables[:5])}...")
+                except Exception as e:
+                    self.log(f"Could not auto-discover tables: {str(e)}")
 
-Available tables: {', '.join(available_tables) if available_tables else 'Infer table names based on requirements'}"""
+            # Build enhanced prompt with metadata
+            enhanced_prompt = f"""User Question: {user_prompt}
+
+Database Information:"""
+
+            if available_tables:
+                enhanced_prompt += f"\nAvailable tables: {', '.join(available_tables)}"
+            else:
+                enhanced_prompt += "\nAvailable tables: Not specified - use SHOW TABLES to discover, or infer common patterns"
 
             if metadata_context:
-                enhanced_prompt += f"\n\nDatabase Schema Context:\n{metadata_context}"
+                enhanced_prompt += f"\n\nSchema Context:\n{metadata_context}"
 
-            enhanced_prompt += "\n\nGenerate SQL query:"
+            enhanced_prompt += "\n\nTask: Generate a SQL query to answer the user's question. Return ONLY the SQL code."
 
             # Generate SQL
             llm_response = self.call_llm(self.system_prompt, enhanced_prompt)
