@@ -167,10 +167,10 @@ SQL Query (ONLY the query, no markdown, no explanations):"""
         if not is_valid:
             sql_upper = sql.upper()
             if 'CUSTOMERS' in sql_upper or 'CUSTOMER' in sql_upper:
-                sql = sql.replace('CUSTOMERS', 'ACCOUNT_ATTRIBUTES_MONTHLY')
-                sql = sql.replace('CUSTOMER', 'ACCOUNT_ATTRIBUTES_MONTHLY')
+                sql = re.sub(re.compile(r'\bCUSTOMERS\b', re.IGNORECASE), 'ACCOUNT_ATTRIBUTES_MONTHLY', sql)
+                sql = re.sub(re.compile(r'\bCUSTOMER\b', re.IGNORECASE), 'ACCOUNT_ATTRIBUTES_MONTHLY', sql)
             if 'USERS' in sql_upper and 'PHONE_USAGE_DATA' not in sql_upper:
-                sql = sql.replace('USERS', 'PHONE_USAGE_DATA')
+                sql = re.sub(re.compile(r'\bUSERS\b', re.IGNORECASE), 'PHONE_USAGE_DATA', sql)
         
         return sql
     
