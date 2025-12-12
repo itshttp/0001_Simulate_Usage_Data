@@ -6,7 +6,6 @@ import re
 
 st.set_page_config(
     page_title="Multi-Agent Data Analysis System",
-    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -464,7 +463,7 @@ class AgentOrchestrator:
         self.context = {"user_request": user_request}
         
         if progress_callback:
-            progress_callback(0.25, "🔍 Data Collection Agent working...")
+            progress_callback(0.25, "Data Collection Agent working...")
         
         result = self.agents["collector"].execute(self.context)
         results["collector"] = result
@@ -476,31 +475,31 @@ class AgentOrchestrator:
         self.context["sql_query"] = result.get("sql_query")
         
         if progress_callback:
-            progress_callback(0.50, "✅ Data QA Agent working...")
+            progress_callback(0.50, "Data QA Agent working...")
         
         result = self.agents["qa"].execute(self.context)
         results["qa"] = result
         
         if progress_callback:
-            progress_callback(0.75, "💡 Business Analyst Agent working...")
+            progress_callback(0.75, "Business Analyst Agent working...")
         
         result = self.agents["analyst"].execute(self.context)
         results["analyst"] = result
         
         if progress_callback:
-            progress_callback(0.90, "🔒 Compliance Agent working...")
+            progress_callback(0.90, "Compliance Agent working...")
         
         result = self.agents["compliance"].execute(self.context)
         results["compliance"] = result
         
         if progress_callback:
-            progress_callback(1.0, "✅ Complete!")
+            progress_callback(1.0, "Complete!")
         
         return results
 
 
 def main():
-    st.title("🤖 Multi-Agent Data Analysis System")
+    st.title("Multi-Agent Data Analysis System")
     st.markdown("**Phone Usage Analytics - Powered by Snowflake Cortex AI**")
     st.markdown("---")
     
@@ -510,10 +509,10 @@ def main():
         st.session_state.model_name = 'snowflake-arctic'
     
     with st.sidebar:
-        st.header("⚙️ Agent Configuration")
+        st.header("Agent Configuration")
         
         st.markdown("---")
-        st.subheader("📊 Available Tables")
+        st.subheader("Available Tables")
         st.info("""
         **ACCOUNT_ATTRIBUTES_MONTHLY**
         - Account info, company, package, tier
@@ -526,25 +525,25 @@ def main():
         """)
         
         st.markdown("---")
-        st.subheader("1️⃣ Data Collection Agent")
+        st.subheader("1. Data Collection Agent")
         st.info("Generates SQL queries based on your request and collects data from Snowflake tables.")
         
-        st.subheader("2️⃣ Data QA Agent")
+        st.subheader("2. Data QA Agent")
         st.info("Validates data quality, checks for nulls, duplicates, and data integrity issues.")
         
-        st.subheader("3️⃣ Business Analyst Agent")
+        st.subheader("3. Business Analyst Agent")
         st.info("Provides business insights, trends, and actionable recommendations.")
         
-        st.info("4️⃣ Compliance Agent will automatically check for PII")
+        st.info("4. Compliance Agent will automatically check for PII")
         
         st.markdown("---")
-        st.subheader("🤖 LLM Model Selection")
+        st.subheader("LLM Model Selection")
         
         available_models = {
-            'snowflake-arctic': '❄️ Snowflake Arctic (Recommended)',
-            'mistral-7b': '🟢 Mistral 7B',
-            'mistral-large': '🔵 Mistral Large',
-            'llama3-70b': '🟣 Llama 3 70B'
+            'snowflake-arctic': 'Snowflake Arctic (Recommended)',
+            'mistral-7b': 'Mistral 7B',
+            'mistral-large': 'Mistral Large',
+            'llama3-70b': 'Llama 3 70B'
         }
         
         selected_model = st.selectbox(
@@ -555,7 +554,7 @@ def main():
         )
         st.session_state.model_name = selected_model
     
-    st.header("📝 Enter Your Analysis Request")
+    st.header("Enter Your Analysis Request")
     
     example_requests = [
         "Show me accounts with declining call volume in the last 6 months",
@@ -584,7 +583,7 @@ def main():
     
     col1, col2 = st.columns([1, 4])
     with col1:
-        execute_button = st.button("🚀 Execute Analysis", type="primary", use_container_width=True)
+        execute_button = st.button("Execute Analysis", type="primary", use_container_width=True)
     
     if execute_button and user_request:
         orchestrator = AgentOrchestrator(st.session_state.model_name)
@@ -607,14 +606,14 @@ def main():
         results = st.session_state.results
         
         st.markdown("---")
-        st.header("📊 Analysis Results")
+        st.header("Analysis Results")
         
         if "collector" in results:
             collector_result = results["collector"]
             
-            with st.expander("🔍 Data Collection Agent Results", expanded=True):
+            with st.expander("Data Collection Agent Results", expanded=True):
                 if collector_result["status"] == "success":
-                    st.success(f"✅ Successfully collected {collector_result['row_count']} rows")
+                    st.success(f"Successfully collected {collector_result['row_count']} rows")
                     
                     st.subheader("Generated SQL Query:")
                     st.code(collector_result["sql_query"], language="sql")
@@ -622,14 +621,14 @@ def main():
                     st.subheader("Data Preview:")
                     st.dataframe(collector_result["data"], use_container_width=True)
                 else:
-                    st.error(f"❌ Error: {collector_result.get('error', 'Unknown error')}")
+                    st.error(f"Error: {collector_result.get('error', 'Unknown error')}")
                     
                     if collector_result.get("sql_query"):
                         st.subheader("Generated SQL Query:")
                         st.code(collector_result.get("sql_query", ""), language="sql")
                     
                     if collector_result.get("suggestion"):
-                        st.info(f"💡 **Suggestion:** {collector_result['suggestion']}")
+                        st.info(f"**Suggestion:** {collector_result['suggestion']}")
                     
                     st.markdown("""
                     **Available Tables:**
@@ -645,13 +644,13 @@ def main():
         if "qa" in results:
             qa_result = results["qa"]
             
-            with st.expander("✅ Data QA Agent Results", expanded=True):
+            with st.expander("Data QA Agent Results", expanded=True):
                 if qa_result["status"] == "success":
-                    st.success("✅ Data quality checks passed")
+                    st.success("Data quality checks passed")
                 elif qa_result["status"] == "warning":
-                    st.warning("⚠️ Data quality warnings detected")
+                    st.warning("Data quality warnings detected")
                 else:
-                    st.error("❌ Data quality issues found")
+                    st.error("Data quality issues found")
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -671,26 +670,26 @@ def main():
         if "analyst" in results:
             analyst_result = results["analyst"]
             
-            with st.expander("💡 Business Analyst Agent Results", expanded=True):
+            with st.expander("Business Analyst Agent Results", expanded=True):
                 if analyst_result["status"] == "success":
-                    st.success("✅ Business insights generated")
+                    st.success("Business insights generated")
                     st.markdown("**Key Insights & Recommendations:**")
                     st.markdown(f'<div class="success-box">{analyst_result["insights"]}</div>', unsafe_allow_html=True)
                 else:
-                    st.error(f"❌ Error: {analyst_result.get('error', 'Unknown error')}")
+                    st.error(f"Error: {analyst_result.get('error', 'Unknown error')}")
         
         if "compliance" in results:
             compliance_result = results["compliance"]
             
-            with st.expander("🔒 Compliance Agent Results", expanded=True):
+            with st.expander("Compliance Agent Results", expanded=True):
                 if compliance_result["status"] == "success":
-                    st.success("✅ No PII detected")
+                    st.success("No PII detected")
                 elif compliance_result["status"] == "warning":
-                    st.warning("⚠️ Potential PII detected")
+                    st.warning("Potential PII detected")
                     if compliance_result.get("warnings"):
                         st.warning("**Warnings:**\n" + "\n".join(f"- {w}" for w in compliance_result["warnings"]))
                 else:
-                    st.error("❌ Compliance issues found")
+                    st.error("Compliance issues found")
                 
                 if compliance_result.get("llm_assessment"):
                     st.markdown("**Compliance Assessment:**")
@@ -698,7 +697,7 @@ def main():
         
         st.markdown("---")
         st.download_button(
-            label="📥 Download Results as JSON",
+            label="Download Results as JSON",
             data=json.dumps(results, default=str, indent=2),
             file_name="agent_results.json",
             mime="application/json"
