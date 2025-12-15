@@ -7,9 +7,8 @@ No external dependencies required beyond Snowflake Snowpark.
 """
 
 import streamlit as st
-import time
 import pandas as pd
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 # ============================================
 # SNOWFLAKE SESSION MANAGEMENT
