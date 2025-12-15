@@ -1,11 +1,11 @@
 import streamlit as st  # type: ignore
 import pandas as pd
-from typing import Dict, Any, Optional, Callable, Tuple
+from typing import Dict, Any, Optional, Callable, Tuple, List
 import json
 import re
 
 st.set_page_config(
-    page_title="Multi-Agent Data Analysis System",
+    page_title="Multi-Agent Data Analysis System (Supervisor)",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -40,6 +40,14 @@ st.markdown("""
         border-left: 4px solid #dc3545;
         margin: 1rem 0;
     }
+    .supervisor-box {
+        background-color: #e7f3ff;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #0066cc;
+        margin: 1rem 0;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -65,6 +73,164 @@ class BaseAgent:
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         raise NotImplementedError
+
+
+class SupervisorAgent(BaseAgent):
+    """Supervisor Agent that uses LLM to coordinate worker agents"""
+    
+    def __init__(self, model_name: str = 'snowflake-arctic'):
+        super().__init__("Supervisor Agent", model_name)
+        self.available_agents = {
+            "collector": "Data Collector Agent - Generates SQL and collects data from Snowflake",
+            "qa": "Data QA Agent - Validates data quality and checks for issues",
+            "analyst": "Business Analyst Agent - Provides business insights and recommendations",
+            "compliance": "Compliance Agent - Checks for PII and compliance issues"
+        }
+        self.execution_history = []
+    
+    def decide_next_action(
+        self,
+        user_request: str,
+        current_context: Dict[str, Any],
+        completed_agents: List[str],
+        agent_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Use LLM to decide which agent to run next or if we should stop"""
+        
+        # Build execution summary
+        execution_summary = []
+        for agent_name in completed_agents:
+            if agent_name in agent_results:
+                result = agent_results[agent_name]
+                status = result.get("status", "unknown")
+                execution_summary.append(
+                    f"- {agent_name}: {status}"
+                    + (f" - {result.get('error', '')}" if status == "error" else "")
+                )
+        
+        context_summary = {
+            "has_data": "data" in current_context and current_context["data"] is not None,
+            "has_sql": "sql_query" in current_context,
+            "data_rows": len(current_context.get("data", [])) if current_context.get("data") is not None else 0
+        }
+        
+        prompt = f"""You are a Supervisor Agent coordinating a team of worker agents for data analysis.
+
+USER REQUEST: {user_request}
+
+AVAILABLE WORKER AGENTS:
+1. collector - Data Collector Agent: Generates SQL queries and collects data from Snowflake tables
+2. qa - Data QA Agent: Validates data quality, checks for nulls, duplicates, and data integrity
+3. analyst - Business Analyst Agent: Provides business insights, trends, and actionable recommendations
+4. compliance - Compliance Agent: Checks for PII (Personally Identifiable Information) and compliance issues
+
+CURRENT EXECUTION STATUS:
+Completed Agents: {', '.join(completed_agents) if completed_agents else 'None'}
+Execution Summary:
+{chr(10).join(execution_summary) if execution_summary else 'No agents executed yet'}
+
+CURRENT CONTEXT:
+- Has data collected: {context_summary['has_data']}
+- Has SQL query: {context_summary['has_sql']}
+- Data rows: {context_summary['data_rows']}
+
+DECISION RULES:
+1. Always start with "collector" agent if no data has been collected
+2. If collector fails, try to fix the issue or stop execution
+3. After collector succeeds, decide if QA is needed (usually yes)
+4. After QA, decide if business analysis is needed (usually yes if data is good)
+5. Compliance check should typically run after data is collected
+6. If any agent fails critically, you may need to stop or retry
+7. You can skip agents if they're not relevant to the user request
+
+Based on the user request and current status, decide:
+1. Which agent should run next (or "STOP" if done)
+2. Why this decision makes sense
+3. Any special instructions for the next agent
+
+Respond in JSON format:
+{{
+    "next_agent": "agent_name or STOP",
+    "reasoning": "explanation of decision",
+    "instructions": "any special instructions for the agent"
+}}"""
+        
+        response = self.call_llm(prompt)
+        
+        # Parse LLM response
+        try:
+            # Try to extract JSON from response
+            json_match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
+            if json_match:
+                decision = json.loads(json_match.group(0))
+            else:
+                # Fallback: try to parse the whole response
+                decision = json.loads(response)
+        except:
+            # Fallback decision logic
+            if not completed_agents:
+                decision = {
+                    "next_agent": "collector",
+                    "reasoning": "Starting with data collection as no agents have run yet",
+                    "instructions": "Collect data based on user request"
+                }
+            elif "collector" not in completed_agents:
+                decision = {
+                    "next_agent": "collector",
+                    "reasoning": "Data collection is required first",
+                    "instructions": "Collect data based on user request"
+                }
+            elif "qa" not in completed_agents and context_summary["has_data"]:
+                decision = {
+                    "next_agent": "qa",
+                    "reasoning": "Data QA should run after data collection",
+                    "instructions": "Validate the collected data quality"
+                }
+            elif "analyst" not in completed_agents and context_summary["has_data"]:
+                decision = {
+                    "next_agent": "analyst",
+                    "reasoning": "Business analysis should run after QA",
+                    "instructions": "Provide business insights"
+                }
+            elif "compliance" not in completed_agents and context_summary["has_data"]:
+                decision = {
+                    "next_agent": "compliance",
+                    "reasoning": "Compliance check should run before completion",
+                    "instructions": "Check for PII and compliance issues"
+                }
+            else:
+                decision = {
+                    "next_agent": "STOP",
+                    "reasoning": "All necessary agents have completed",
+                    "instructions": "Execution complete"
+                }
+        
+        decision["raw_response"] = response
+        return decision
+    
+    def should_retry_agent(
+        self,
+        agent_name: str,
+        result: Dict[str, Any],
+        retry_count: int,
+        max_retries: int = 2
+    ) -> bool:
+        """Decide if an agent should be retried after failure"""
+        if retry_count >= max_retries:
+            return False
+        
+        if result.get("status") == "error":
+            error = result.get("error", "").lower()
+            # Retry on certain types of errors
+            retryable_errors = [
+                "does not exist",
+                "invalid table",
+                "syntax error",
+                "timeout"
+            ]
+            return any(err in error for err in retryable_errors)
+        
+        return False
 
 
 class DataCollectorAgent(BaseAgent):
@@ -195,6 +361,12 @@ SQL Query (ONLY the query, no markdown, no explanations):"""
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         user_request = context.get('user_request', '')
+        supervisor_instructions = context.get('supervisor_instructions', '')
+        
+        # Incorporate supervisor instructions if provided
+        if supervisor_instructions:
+            user_request = f"{user_request}\n\nSupervisor Instructions: {supervisor_instructions}"
+        
         sql_query = self.generate_sql(user_request)
         
         is_valid, error_msg = self.validate_sql_tables(sql_query)
@@ -309,6 +481,7 @@ Provide a concise assessment:"""
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         df = context.get('data')
         sql_query = context.get('sql_query', '')
+        supervisor_instructions = context.get('supervisor_instructions', '')
         
         if df is None:
             return {
@@ -360,6 +533,7 @@ Be specific, data-driven, and actionable. Focus on phone usage patterns, account
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         df = context.get('data')
         user_request = context.get('user_request', '')
+        supervisor_instructions = context.get('supervisor_instructions', '')
         
         if df is None or df.empty:
             return {
@@ -367,6 +541,10 @@ Be specific, data-driven, and actionable. Focus on phone usage patterns, account
                 "error": "No data available for analysis",
                 "agent": self.agent_name
             }
+        
+        # Incorporate supervisor instructions if provided
+        if supervisor_instructions:
+            user_request = f"{user_request}\n\nSupervisor Instructions: {supervisor_instructions}"
         
         insights = self.analyze(df, user_request)
         
@@ -430,6 +608,7 @@ Provide a compliance assessment and recommendations:"""
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         df = context.get('data')
         sql_query = context.get('sql_query', '')
+        supervisor_instructions = context.get('supervisor_instructions', '')
         
         if df is None:
             return {
@@ -444,63 +623,131 @@ Provide a compliance assessment and recommendations:"""
         return compliance_result
 
 
-class AgentOrchestrator:
+class SupervisorOrchestrator:
+    """Orchestrator that uses Supervisor Agent to coordinate worker agents"""
+    
     def __init__(self, model_name: str = 'snowflake-arctic'):
-        self.agents = {
+        self.supervisor = SupervisorAgent(model_name)
+        self.workers = {
             "collector": DataCollectorAgent(model_name),
             "qa": DataQAAgent(model_name),
             "analyst": BusinessAnalystAgent(model_name),
             "compliance": ComplianceAgent(model_name)
         }
         self.context = {}
+        self.execution_history = []
+        self.agent_results = {}
+        self.retry_counts = {}
     
     def execute_pipeline(
         self,
         user_request: str,
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> Dict[str, Any]:
-        results = {}
+        """Execute pipeline using supervisor to coordinate agents"""
         self.context = {"user_request": user_request}
+        self.execution_history = []
+        self.agent_results = {}
+        self.retry_counts = {}
         
-        if progress_callback:
-            progress_callback(0.25, "Data Collection Agent working...")
+        completed_agents = []
+        max_iterations = 10  # Prevent infinite loops
+        iteration = 0
         
-        result = self.agents["collector"].execute(self.context)
-        results["collector"] = result
+        while iteration < max_iterations:
+            iteration += 1
+            
+            # Supervisor decides next action
+            if progress_callback:
+                progress_callback(
+                    min(0.9, iteration * 0.1),
+                    f"Supervisor Agent deciding next action (iteration {iteration})..."
+                )
+            
+            decision = self.supervisor.decide_next_action(
+                user_request=user_request,
+                current_context=self.context,
+                completed_agents=completed_agents,
+                agent_results=self.agent_results
+            )
+            
+            next_agent = decision.get("next_agent", "").lower()
+            reasoning = decision.get("reasoning", "")
+            instructions = decision.get("instructions", "")
+            
+            # Store supervisor decision in history
+            self.execution_history.append({
+                "iteration": iteration,
+                "decision": decision,
+                "completed_agents": completed_agents.copy()
+            })
+            
+            # Check if we should stop
+            if next_agent == "stop" or next_agent == "":
+                if progress_callback:
+                    progress_callback(1.0, "Supervisor decided to stop - execution complete!")
+                break
+            
+            # Validate agent exists
+            if next_agent not in self.workers:
+                if progress_callback:
+                    progress_callback(1.0, f"Supervisor requested unknown agent: {next_agent}. Stopping.")
+                break
+            
+            # Execute the agent
+            agent_key = next_agent
+            if progress_callback:
+                agent_display_name = self.workers[agent_key].agent_name
+                progress_callback(
+                    min(0.9, iteration * 0.1 + 0.05),
+                    f"{agent_display_name} executing... (Supervisor: {reasoning})"
+                )
+            
+            # Add supervisor instructions to context
+            self.context["supervisor_instructions"] = instructions
+            
+            # Execute worker agent
+            result = self.workers[agent_key].execute(self.context)
+            self.agent_results[agent_key] = result
+            
+            # Update context with results
+            if result.get("status") == "success":
+                if "data" in result:
+                    self.context["data"] = result["data"]
+                if "sql_query" in result:
+                    self.context["sql_query"] = result["sql_query"]
+            
+            # Check if we should retry
+            if result.get("status") == "error":
+                retry_count = self.retry_counts.get(agent_key, 0)
+                if self.supervisor.should_retry_agent(agent_key, result, retry_count):
+                    self.retry_counts[agent_key] = retry_count + 1
+                    if progress_callback:
+                        progress_callback(
+                            min(0.9, iteration * 0.1 + 0.05),
+                            f"Supervisor decided to retry {agent_key} (attempt {retry_count + 2})"
+                        )
+                    continue  # Retry same agent
+            
+            # Mark agent as completed (even if failed, don't retry indefinitely)
+            if agent_key not in completed_agents:
+                completed_agents.append(agent_key)
         
-        if result["status"] == "error":
-            return results
+        # Prepare final results
+        final_results = {
+            "supervisor_decisions": self.execution_history,
+            "agent_results": self.agent_results,
+            "completed_agents": completed_agents,
+            "iterations": iteration
+        }
         
-        self.context["data"] = result.get("data")
-        self.context["sql_query"] = result.get("sql_query")
-        
-        if progress_callback:
-            progress_callback(0.50, "Data QA Agent working...")
-        
-        result = self.agents["qa"].execute(self.context)
-        results["qa"] = result
-        
-        if progress_callback:
-            progress_callback(0.75, "Business Analyst Agent working...")
-        
-        result = self.agents["analyst"].execute(self.context)
-        results["analyst"] = result
-        
-        if progress_callback:
-            progress_callback(0.90, "Compliance Agent working...")
-        
-        result = self.agents["compliance"].execute(self.context)
-        results["compliance"] = result
-        
-        if progress_callback:
-            progress_callback(1.0, "Complete!")
-        
-        return results
+        return final_results
 
 
 def main():
-    st.title("Multi-Agent Data Analysis System")
+    st.title("Multi-Agent Data Analysis System (Supervisor Framework)")
     st.markdown("**Phone Usage Analytics - Powered by Snowflake Cortex AI**")
+    st.markdown("**🤖 Supervisor Agent coordinates worker agents dynamically**")
     st.markdown("---")
     
     if 'results' not in st.session_state:
@@ -509,7 +756,14 @@ def main():
         st.session_state.model_name = 'snowflake-arctic'
     
     with st.sidebar:
-        st.header("Agent Configuration")
+        st.header("Supervisor Framework")
+        st.info("""
+        **Supervisor Agent** uses LLM to:
+        - Decide which agents to run
+        - Determine execution order
+        - Handle errors and retries
+        - Coordinate worker agents dynamically
+        """)
         
         st.markdown("---")
         st.subheader("Available Tables")
@@ -525,16 +779,20 @@ def main():
         """)
         
         st.markdown("---")
-        st.subheader("1. Data Collection Agent")
-        st.info("Generates SQL queries based on your request and collects data from Snowflake tables.")
+        st.subheader("Worker Agents")
+        st.info("""
+        **1. Data Collector Agent**
+        Generates SQL and collects data
         
-        st.subheader("2. Data QA Agent")
-        st.info("Validates data quality, checks for nulls, duplicates, and data integrity issues.")
+        **2. Data QA Agent**
+        Validates data quality
         
-        st.subheader("3. Business Analyst Agent")
-        st.info("Provides business insights, trends, and actionable recommendations.")
+        **3. Business Analyst Agent**
+        Provides insights and recommendations
         
-        st.info("4. Compliance Agent will automatically check for PII")
+        **4. Compliance Agent**
+        Checks for PII and compliance
+        """)
         
         st.markdown("---")
         st.subheader("LLM Model Selection")
@@ -578,7 +836,7 @@ def main():
         "Describe what data you need and what analysis you want:",
         value=default_request,
         height=100,
-        help="Describe what data you need, Agent will generate SQL"
+        help="Supervisor Agent will coordinate worker agents to fulfill your request"
     )
     
     col1, col2 = st.columns([1, 4])
@@ -586,7 +844,7 @@ def main():
         execute_button = st.button("Execute Analysis", type="primary", use_container_width=True)
     
     if execute_button and user_request:
-        orchestrator = AgentOrchestrator(st.session_state.model_name)
+        orchestrator = SupervisorOrchestrator(st.session_state.model_name)
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -595,7 +853,7 @@ def main():
             progress_bar.progress(progress)
             status_text.text(message)
         
-        with st.spinner("Agents working..."):
+        with st.spinner("Supervisor coordinating agents..."):
             results = orchestrator.execute_pipeline(user_request, update_progress)
             st.session_state.results = results
         
@@ -608,8 +866,30 @@ def main():
         st.markdown("---")
         st.header("Analysis Results")
         
-        if "collector" in results:
-            collector_result = results["collector"]
+        # Show supervisor decisions
+        if "supervisor_decisions" in results:
+            with st.expander("🤖 Supervisor Agent Decisions", expanded=True):
+                st.markdown("**Supervisor Agent Coordination Log:**")
+                for decision_log in results["supervisor_decisions"]:
+                    decision = decision_log["decision"]
+                    next_agent = decision.get("next_agent", "Unknown")
+                    reasoning = decision.get("reasoning", "")
+                    
+                    st.markdown(f"""
+                    <div class="supervisor-box">
+                    <strong>Iteration {decision_log['iteration']}:</strong> Supervisor decided to run <strong>{next_agent}</strong><br>
+                    <strong>Reasoning:</strong> {reasoning}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.metric("Total Iterations", results.get("iterations", 0))
+                st.metric("Agents Completed", len(results.get("completed_agents", [])))
+        
+        # Show agent results
+        agent_results = results.get("agent_results", {})
+        
+        if "collector" in agent_results:
+            collector_result = agent_results["collector"]
             
             with st.expander("Data Collection Agent Results", expanded=True):
                 if collector_result["status"] == "success":
@@ -629,20 +909,9 @@ def main():
                     
                     if collector_result.get("suggestion"):
                         st.info(f"**Suggestion:** {collector_result['suggestion']}")
-                    
-                    st.markdown("""
-                    **Available Tables:**
-                    - `ACCOUNT_ATTRIBUTES_MONTHLY` - Account information (company, package, tier)
-                    - `PHONE_USAGE_DATA` - Phone usage metrics (calls, minutes, MAU)
-                    - `CHURN_RECORDS` - Churn events
-                    
-                    **Tip:** Make sure your request only references these tables. For example:
-                    - Instead of "customers", use "accounts from ACCOUNT_ATTRIBUTES_MONTHLY"
-                    - Instead of "users", use "USERID from PHONE_USAGE_DATA"
-                    """)
         
-        if "qa" in results:
-            qa_result = results["qa"]
+        if "qa" in agent_results:
+            qa_result = agent_results["qa"]
             
             with st.expander("Data QA Agent Results", expanded=True):
                 if qa_result["status"] == "success":
@@ -667,8 +936,8 @@ def main():
                     st.markdown("**LLM Assessment:**")
                     st.markdown(f'<div class="agent-box">{qa_result["llm_assessment"]}</div>', unsafe_allow_html=True)
         
-        if "analyst" in results:
-            analyst_result = results["analyst"]
+        if "analyst" in agent_results:
+            analyst_result = agent_results["analyst"]
             
             with st.expander("Business Analyst Agent Results", expanded=True):
                 if analyst_result["status"] == "success":
@@ -678,8 +947,8 @@ def main():
                 else:
                     st.error(f"Error: {analyst_result.get('error', 'Unknown error')}")
         
-        if "compliance" in results:
-            compliance_result = results["compliance"]
+        if "compliance" in agent_results:
+            compliance_result = agent_results["compliance"]
             
             with st.expander("Compliance Agent Results", expanded=True):
                 if compliance_result["status"] == "success":
@@ -699,11 +968,10 @@ def main():
         st.download_button(
             label="Download Results as JSON",
             data=json.dumps(results, default=str, indent=2),
-            file_name="agent_results.json",
+            file_name="supervisor_agent_results.json",
             mime="application/json"
         )
 
 
 if __name__ == "__main__":
     main()
-
